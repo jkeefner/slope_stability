@@ -1186,6 +1186,72 @@
             color: var(--accent-purple);
             font-weight: 600;
         }
+
+        /* Unit Toggle Switch */
+        .unit-toggle-container {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .unit-toggle {
+            position: relative;
+            display: inline-block;
+            width: 44px;
+            height: 22px;
+        }
+
+        .unit-toggle input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .unit-toggle .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 22px;
+            transition: all 0.3s;
+        }
+
+        .unit-toggle .slider:before {
+            content: "";
+            position: absolute;
+            height: 16px;
+            width: 16px;
+            left: 2px;
+            bottom: 2px;
+            background: var(--accent-teal);
+            border-radius: 50%;
+            transition: all 0.3s;
+        }
+
+        .unit-toggle input:checked + .slider {
+            background: rgba(0, 212, 170, 0.2);
+            border-color: var(--accent-teal);
+        }
+
+        .unit-toggle input:checked + .slider:before {
+            transform: translateX(22px);
+        }
+
+        .unit-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: var(--text-dim);
+            min-width: 45px;
+            text-align: center;
+            cursor: pointer;
+            transition: color 0.2s;
+        }
+
+        .unit-label.active {
+            color: var(--accent-teal);
+        }
     </style>
 </head>
 <body>
@@ -1200,9 +1266,17 @@
             </div>
         </div>
         <div class="header-method">
-            <span style="font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; color: var(--text-dim);">
-                Modified Bishop's Method • Imperial Units
-            </span>
+            <div class="unit-toggle-container">
+                <span style="font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; color: var(--text-dim); margin-right: 0.5rem;">
+                    Modified Bishop's Method •
+                </span>
+                <span class="unit-label active" id="imperialLabel" onclick="setUnitSystem('imperial')">IMP</span>
+                <label class="unit-toggle">
+                    <input type="checkbox" id="unitToggle" onchange="toggleUnitSystem()">
+                    <span class="slider"></span>
+                </label>
+                <span class="unit-label" id="metricLabel" onclick="setUnitSystem('metric')">SI</span>
+            </div>
         </div>
     </div>
 
@@ -1236,8 +1310,8 @@
             <div class="advanced-content" id="advancedContent">
                 <div class="height-indicator" id="heightIndicator">
                     <div>
-                        <span class="used">Used: <span id="usedHeight">0</span> ft</span>
-                        <span class="remaining" style="margin-left: 1rem;">Remaining: <span id="remainingHeight">200</span> ft</span>
+                        <span class="used">Used: <span id="usedHeight">0</span> <span class="unit-label-h">ft</span></span>
+                        <span class="remaining" style="margin-left: 1rem;">Remaining: <span id="remainingHeight">200</span> <span class="unit-label-h">ft</span></span>
                     </div>
                     <span id="heightStatus" style="font-size: 0.75rem;"></span>
                 </div>
@@ -1745,6 +1819,278 @@
             heap_leach: { cohesion: 300, friction: 32, weight: 115 }
         };
 
+        // ============================================
+        // UNIT SYSTEM (Imperial / Metric)
+        // ============================================
+        let unitSystem = 'imperial'; // 'imperial' or 'metric'
+
+        const unitConversions = {
+            length:    { factor: 0.3048,   imperial: 'ft',    metric: 'm' },
+            pressure:  { factor: 0.04788,  imperial: 'psf',   metric: 'kPa' },
+            unitWeight:{ factor: 0.15714,  imperial: 'pcf',   metric: 'kN/m³' },
+            area:      { factor: 0.09290,  imperial: 'ft²',   metric: 'm²' },
+            volume:    { factor: 0.7646,   imperial: 'yd³',   metric: 'm³' },
+            mass:      { factor: 0.9072,   imperial: 'tons',  metric: 'tonnes' },
+            force:     { factor: 0.01459,  imperial: 'lb/ft', metric: 'kN/m' },
+            forceAbs:  { factor: 4.44822,  imperial: 'lb',    metric: 'N' },
+            wPerLen:   { factor: 0.01459,  imperial: 'tons/ft', metric: 'tonnes/m' }
+        };
+
+        // Convert from Imperial to display units
+        function toDisplay(value, type) {
+            if (unitSystem === 'imperial' || !unitConversions[type]) return value;
+            return value * unitConversions[type].factor;
+        }
+
+        // Convert from display units to Imperial
+        function fromDisplay(value, type) {
+            if (unitSystem === 'imperial' || !unitConversions[type]) return value;
+            return value / unitConversions[type].factor;
+        }
+
+        // Get unit label for a type
+        function getUnit(type) {
+            if (!unitConversions[type]) return '';
+            return unitSystem === 'imperial' ? unitConversions[type].imperial : unitConversions[type].metric;
+        }
+
+        // Format display value with appropriate precision
+        function fmtD(value, type, decimals) {
+            const v = toDisplay(value, type);
+            if (decimals !== undefined) return v.toFixed(decimals);
+            // Auto precision based on magnitude
+            if (Math.abs(v) >= 1000) return v.toFixed(0);
+            if (Math.abs(v) >= 100) return v.toFixed(0);
+            if (Math.abs(v) >= 10) return v.toFixed(1);
+            if (Math.abs(v) >= 1) return v.toFixed(1);
+            return v.toFixed(2);
+        }
+
+        // Metric material database (clean rounded values)
+        const materialDatabaseMetric = {
+            hard_rock:     { cohesion: 480,  friction: 40, weight: 26.0 },
+            weathered_rock:{ cohesion: 96,   friction: 35, weight: 23.6 },
+            fractured_rock:{ cohesion: 48,   friction: 32, weight: 24.4 },
+            shale:         { cohesion: 38,   friction: 25, weight: 22.0 },
+            dense_sand:    { cohesion: 0,    friction: 38, weight: 20.4 },
+            loose_sand:    { cohesion: 0,    friction: 28, weight: 17.3 },
+            stiff_clay:    { cohesion: 72,   friction: 25, weight: 19.6 },
+            soft_clay:     { cohesion: 14,   friction: 15, weight: 18.1 },
+            waste_rock:    { cohesion: 10,   friction: 35, weight: 20.4 },
+            heap_leach:    { cohesion: 14,   friction: 32, weight: 18.1 }
+        };
+
+        // Get clean metric constraint defaults
+        function getMetricPresetDefaults(preset, H_imperial) {
+            const H_m = H_imperial * 0.3048;
+            switch(preset) {
+                case 'bench': return {
+                    minRadius: 5, maxRadius: Math.max(30, Math.round(H_m * 0.5)),
+                    toeMin: -6, toeMax: 15, crestMin: -25, crestMax: 6
+                };
+                case 'interramp': return {
+                    minRadius: 6, maxRadius: Math.max(120, Math.round(H_m * 1.5)),
+                    toeMin: -10, toeMax: 10, crestMin: -15, crestMax: 15
+                };
+                case 'overall': return {
+                    minRadius: 15, maxRadius: Math.max(250, Math.round(H_m * 3)),
+                    toeMin: -15, toeMax: 6, crestMin: -10, crestMax: 25
+                };
+                default: return null;
+            }
+        }
+
+        // Toggle unit system
+        function toggleUnitSystem() {
+            const isMetric = document.getElementById('unitToggle').checked;
+            setUnitSystem(isMetric ? 'metric' : 'imperial');
+        }
+
+        function setUnitSystem(system) {
+            const oldSystem = unitSystem;
+            unitSystem = system;
+            
+            // Update toggle state
+            document.getElementById('unitToggle').checked = (system === 'metric');
+            document.getElementById('imperialLabel').classList.toggle('active', system === 'imperial');
+            document.getElementById('metricLabel').classList.toggle('active', system === 'metric');
+            
+            // Convert all input values
+            convertAllInputs(oldSystem, system);
+            
+            // Update all labels
+            refreshAllUnitLabels();
+            
+            // Update displays
+            updateConstraintDisplay();
+            updateLimitDisplay('toe');
+            updateLimitDisplay('crest');
+            updateHeightIndicator();
+            if (advancedMode) renderSegments();
+            
+            // Re-display results if available
+            if (lastAnalysisResult) {
+                showResults([lastAnalysisResult.critical]);
+                showCalculationDetails();
+            }
+            
+            // Update sensitivity param labels
+            refreshSensitivityLabels();
+        }
+
+        // Convert all input field values between unit systems
+        function convertAllInputs(fromSys, toSys) {
+            if (fromSys === toSys) return;
+            const toMetric = (toSys === 'metric');
+            
+            // Helper: convert an input field
+            function convertInput(id, type) {
+                const el = document.getElementById(id);
+                if (!el) return;
+                const val = parseFloat(el.value);
+                if (isNaN(val)) return;
+                const factor = unitConversions[type].factor;
+                el.value = toMetric ? roundNice(val * factor) : roundNice(val / factor);
+            }
+            
+            // Helper: round to clean numbers
+            function roundNice(v) {
+                if (Math.abs(v) >= 100) return Math.round(v);
+                if (Math.abs(v) >= 10) return Math.round(v * 2) / 2; // round to 0.5
+                if (Math.abs(v) >= 1) return Math.round(v * 10) / 10;
+                return Math.round(v * 100) / 100;
+            }
+            
+            // Geometry
+            convertInput('slopeHeight', 'length');
+            
+            // Material (simple mode)
+            convertInput('cohesion', 'pressure');
+            convertInput('unitWeight', 'unitWeight');
+            
+            // Hydrogeology
+            convertInput('waterTable', 'length');
+            
+            // Search constraints
+            convertInput('minRadius', 'length');
+            convertInput('maxRadius', 'length');
+            convertInput('toeMin', 'length');
+            convertInput('toeMax', 'length');
+            convertInput('crestMin', 'length');
+            convertInput('crestMax', 'length');
+            
+            // Failure width
+            convertInput('failureWidth', 'length');
+            
+            // Sensitivity min/max
+            // (these depend on which parameter is selected, handle separately)
+            refreshSensitivityRange();
+            
+            // Convert segments
+            const factor_len = unitConversions.length.factor;
+            const factor_pres = unitConversions.pressure.factor;
+            const factor_uw = unitConversions.unitWeight.factor;
+            
+            segments.forEach(seg => {
+                if (toMetric) {
+                    seg.benchHeight = roundNice(seg.benchHeight * factor_len);
+                    seg.catchBenchWidth = roundNice(seg.catchBenchWidth * factor_len);
+                    seg.stepoutWidth = roundNice(seg.stepoutWidth * factor_len);
+                    seg.cohesion = roundNice(seg.cohesion * factor_pres);
+                    seg.unitWeight = roundNice(seg.unitWeight * factor_uw);
+                } else {
+                    seg.benchHeight = roundNice(seg.benchHeight / factor_len);
+                    seg.catchBenchWidth = roundNice(seg.catchBenchWidth / factor_len);
+                    seg.stepoutWidth = roundNice(seg.stepoutWidth / factor_len);
+                    seg.cohesion = roundNice(seg.cohesion / factor_pres);
+                    seg.unitWeight = roundNice(seg.unitWeight / factor_uw);
+                }
+            });
+        }
+
+        // Refresh all unit labels in the UI
+        function refreshAllUnitLabels() {
+            const L = getUnit('length');
+            const P = getUnit('pressure');
+            const UW = getUnit('unitWeight');
+            
+            // Slope Geometry
+            setLabelText('slopeHeight', `Overall Slope Height, H (${L})`);
+            
+            // Material Properties
+            setLabelText('cohesion', `Cohesion, c' (${P})`);
+            setLabelText('unitWeight', `Unit Weight, γ (${UW})`);
+            
+            // Water table
+            const wtEl = document.getElementById('waterTable');
+            if (wtEl) {
+                const wtLabel = wtEl.closest('.input-group')?.querySelector('.input-label');
+                if (wtLabel) {
+                    const val = wtEl.value;
+                    wtLabel.innerHTML = `Water Table Depth (${L} below crest) <span class="range-value" id="waterTableValue">${val} ${L}</span>`;
+                }
+            }
+            
+            // Constraint labels
+            const maxDepthFt = document.getElementById('maxDepthFt');
+            if (maxDepthFt) {
+                const depthLabel = maxDepthFt.closest('.input-group')?.querySelector('.input-label');
+                if (depthLabel) {
+                    depthLabel.innerHTML = `Max Depth: <span id="maxDepthFt">${maxDepthFt.textContent}</span> ${L}`;
+                }
+            }
+            setLabelText('minRadius', `Min Radius (${L})`);
+            setLabelText('maxRadius', `Max Radius (${L})`);
+            
+            // Search zones
+            const toeLabel = document.getElementById('toeMin')?.closest('.input-group')?.querySelector('.input-label');
+            if (toeLabel) toeLabel.textContent = `Entry Search Zone (${L} from toe, + = upslope)`;
+            
+            const crestLabel = document.getElementById('crestMin')?.closest('.input-group')?.querySelector('.input-label');
+            if (crestLabel) crestLabel.textContent = `Exit Search Zone (${L} from crest, - = downslope)`;
+            
+            // Failure width label
+            const fwLabel = document.querySelector('#failureWidth')?.closest('.result-item')?.querySelector('.result-item-label');
+            if (fwLabel) fwLabel.textContent = `Failure Width (${L})`;
+            
+            // Update slider displays
+            document.getElementById('waterTableValue').textContent = document.getElementById('waterTable').value + ' ' + L;
+        }
+
+        // Helper to set label text for an input by its ID
+        function setLabelText(inputId, text) {
+            const el = document.getElementById(inputId);
+            if (!el) return;
+            const group = el.closest('.input-group');
+            if (!group) return;
+            const label = group.querySelector('.input-label');
+            if (label) label.textContent = text;
+        }
+
+        // Refresh sensitivity analysis labels
+        function refreshSensitivityLabels() {
+            const select = document.getElementById('sensitivityParam');
+            if (!select) return;
+            const L = getUnit('length');
+            const P = getUnit('pressure');
+            const UW = getUnit('unitWeight');
+            
+            const options = select.querySelectorAll('option');
+            options.forEach(opt => {
+                switch(opt.value) {
+                    case 'cohesion': opt.textContent = `Cohesion, c' (${P})`; break;
+                    case 'unitWeight': opt.textContent = `Unit Weight, γ (${UW})`; break;
+                    case 'slopeHeight': opt.textContent = `Slope Height, H (${L})`; break;
+                    case 'waterTable': opt.textContent = `Water Table Depth (${L})`; break;
+                }
+            });
+        }
+
+        // Refresh sensitivity range when units change
+        function refreshSensitivityRange() {
+            // Will be called by updateSensitivityRange which handles the defaults
+        }
+
         // Segment storage
         let segments = [];
         let segmentIdCounter = 0;
@@ -1768,7 +2114,7 @@
             document.getElementById('frictionAngleValue').textContent = this.value + '°';
         });
         document.getElementById('waterTable').addEventListener('input', function() {
-            document.getElementById('waterTableValue').textContent = this.value + ' ft';
+            document.getElementById('waterTableValue').textContent = this.value + ' ' + getUnit('length');
         });
         document.getElementById('numSlices').addEventListener('input', function() {
             document.getElementById('numSlicesValue').textContent = this.value;
@@ -1806,36 +2152,38 @@
         // Get pore pressure parameters
         function getPorePressureParams() {
             const model = document.getElementById('porePressureModel').value;
+            const wtRaw = parseFloat(document.getElementById('waterTable').value) || 50;
             return {
                 model: model,
-                waterTableDepth: parseFloat(document.getElementById('waterTable').value) || 50,
+                waterTableDepth: fromDisplay(wtRaw, 'length'),
                 ru: parseFloat(document.getElementById('ruCoeff').value) || 0
             };
         }
 
         // Constraint and preset functions
         function getConstraints() {
-            const H = parseFloat(document.getElementById('slopeHeight').value) || 200;
+            const H = fromDisplay(parseFloat(document.getElementById('slopeHeight').value) || (unitSystem === 'metric' ? 60 : 200), 'length');
             const maxDepthPercent = parseFloat(document.getElementById('maxDepthPercent').value) || 50;
             return {
                 maxDepth: H * maxDepthPercent / 100,
                 maxDepthPercent: maxDepthPercent,
-                minRadius: parseFloat(document.getElementById('minRadius').value) || 20,
-                maxRadius: parseFloat(document.getElementById('maxRadius').value) || 400
+                minRadius: fromDisplay(parseFloat(document.getElementById('minRadius').value) || 20, 'length'),
+                maxRadius: fromDisplay(parseFloat(document.getElementById('maxRadius').value) || 400, 'length')
             };
         }
 
         function updateConstraintDisplay() {
-            const H = parseFloat(document.getElementById('slopeHeight').value) || 200;
+            const H = parseFloat(document.getElementById('slopeHeight').value) || (unitSystem === 'metric' ? 60 : 200);
             const maxDepthPercent = parseFloat(document.getElementById('maxDepthPercent').value) || 50;
             const maxDepthFt = H * maxDepthPercent / 100;
             const minR = parseFloat(document.getElementById('minRadius').value) || 20;
             const maxR = parseFloat(document.getElementById('maxRadius').value) || 400;
+            const uLen = getUnit('length');
             
             document.getElementById('maxDepthValue').textContent = maxDepthPercent + '%';
             document.getElementById('maxDepthFt').textContent = maxDepthFt.toFixed(0);
             document.getElementById('constraintSummary').textContent = 
-                `Depth ≤ ${maxDepthFt.toFixed(0)} ft | Radius: ${minR} - ${maxR} ft`;
+                `Depth ≤ ${maxDepthFt.toFixed(0)} ${uLen} | Radius: ${minR} - ${maxR} ${uLen}`;
         }
 
         function applyPreset(preset) {
@@ -1843,45 +2191,51 @@
             document.querySelectorAll('.preset-btn').forEach(btn => btn.classList.remove('active'));
             event.target.classList.add('active');
             
-            const H = parseFloat(document.getElementById('slopeHeight').value) || 200;
+            const H = parseFloat(document.getElementById('slopeHeight').value) || (unitSystem === 'metric' ? 60 : 200);
             
-            switch(preset) {
-                case 'bench':
-                    // Shallow, single-bench failures
-                    document.getElementById('maxDepthPercent').value = 25;
-                    document.getElementById('minRadius').value = 15;
-                    document.getElementById('maxRadius').value = Math.max(100, H * 0.5);
-                    document.getElementById('toeMin').value = -20;
-                    document.getElementById('toeMax').value = 50;
-                    document.getElementById('crestMin').value = -80;
-                    document.getElementById('crestMax').value = 20;
-                    break;
-                    
-                case 'interramp':
-                    // Inter-ramp failures (default)
-                    document.getElementById('maxDepthPercent').value = 50;
-                    document.getElementById('minRadius').value = 20;
-                    document.getElementById('maxRadius').value = Math.max(400, H * 1.5);
-                    document.getElementById('toeMin').value = -30;
-                    document.getElementById('toeMax').value = 30;
-                    document.getElementById('crestMin').value = -50;
-                    document.getElementById('crestMax').value = 50;
-                    break;
-                    
-                case 'overall':
-                    // Deep-seated overall slope failures
-                    document.getElementById('maxDepthPercent').value = 100;
-                    document.getElementById('minRadius').value = 50;
-                    document.getElementById('maxRadius').value = Math.max(800, H * 3);
-                    document.getElementById('toeMin').value = -50;
-                    document.getElementById('toeMax').value = 20;
-                    document.getElementById('crestMin').value = -30;
-                    document.getElementById('crestMax').value = 80;
-                    break;
-                    
-                case 'custom':
-                    // Don't change anything, just enable editing
-                    break;
+            if (unitSystem === 'metric') {
+                const md = getMetricPresetDefaults(preset, fromDisplay(H, 'length'));
+                if (md) {
+                    document.getElementById('maxDepthPercent').value = md.maxDepthPercent;
+                    document.getElementById('minRadius').value = md.minRadius;
+                    document.getElementById('maxRadius').value = md.maxRadius;
+                    document.getElementById('toeMin').value = md.toeMin;
+                    document.getElementById('toeMax').value = md.toeMax;
+                    document.getElementById('crestMin').value = md.crestMin;
+                    document.getElementById('crestMax').value = md.crestMax;
+                }
+            } else {
+                switch(preset) {
+                    case 'bench':
+                        document.getElementById('maxDepthPercent').value = 25;
+                        document.getElementById('minRadius').value = 15;
+                        document.getElementById('maxRadius').value = Math.max(100, H * 0.5);
+                        document.getElementById('toeMin').value = -20;
+                        document.getElementById('toeMax').value = 50;
+                        document.getElementById('crestMin').value = -80;
+                        document.getElementById('crestMax').value = 20;
+                        break;
+                    case 'interramp':
+                        document.getElementById('maxDepthPercent').value = 50;
+                        document.getElementById('minRadius').value = 20;
+                        document.getElementById('maxRadius').value = Math.max(400, H * 1.5);
+                        document.getElementById('toeMin').value = -30;
+                        document.getElementById('toeMax').value = 30;
+                        document.getElementById('crestMin').value = -50;
+                        document.getElementById('crestMax').value = 50;
+                        break;
+                    case 'overall':
+                        document.getElementById('maxDepthPercent').value = 100;
+                        document.getElementById('minRadius').value = 50;
+                        document.getElementById('maxRadius').value = Math.max(800, H * 3);
+                        document.getElementById('toeMin').value = -50;
+                        document.getElementById('toeMax').value = 20;
+                        document.getElementById('crestMin').value = -30;
+                        document.getElementById('crestMax').value = 80;
+                        break;
+                    case 'custom':
+                        break;
+                }
             }
             
             updateConstraintDisplay();
@@ -2128,13 +2482,13 @@
             }
         }
 
-        // Get current limit values
+        // Get current limit values (always returns Imperial for calculation engine)
         function getLimits() {
             return {
-                toeMin: parseFloat(document.getElementById('toeMin').value) || -30,
-                toeMax: parseFloat(document.getElementById('toeMax').value) || 30,
-                crestMin: parseFloat(document.getElementById('crestMin').value) || -50,
-                crestMax: parseFloat(document.getElementById('crestMax').value) || 50
+                toeMin: fromDisplay(parseFloat(document.getElementById('toeMin').value) || -30, 'length'),
+                toeMax: fromDisplay(parseFloat(document.getElementById('toeMax').value) || 30, 'length'),
+                crestMin: fromDisplay(parseFloat(document.getElementById('crestMin').value) || -50, 'length'),
+                crestMax: fromDisplay(parseFloat(document.getElementById('crestMax').value) || 50, 'length')
             };
         }
 
@@ -2150,8 +2504,9 @@
 
         function updateMaterialProperties() {
             const type = document.getElementById('materialType').value;
-            if (type !== 'custom' && materialDatabase[type]) {
-                const mat = materialDatabase[type];
+            const db = (unitSystem === 'metric' && materialDatabaseMetric[type]) ? materialDatabaseMetric : materialDatabase;
+            if (type !== 'custom' && db[type]) {
+                const mat = db[type];
                 document.getElementById('cohesion').value = mat.cohesion;
                 document.getElementById('frictionAngle').value = mat.friction;
                 document.getElementById('frictionAngleValue').textContent = mat.friction + '°';
@@ -2178,7 +2533,7 @@
         }
 
         function updateHeightIndicator() {
-            const totalH = parseFloat(document.getElementById('slopeHeight').value) || 200;
+            const totalH = parseFloat(document.getElementById('slopeHeight').value) || (unitSystem === 'metric' ? 60 : 200);
             const usedH = segments.reduce((sum, seg) => sum + ((seg.benchHeight || 0) * (seg.numBenches || 1)), 0);
             const remaining = totalH - usedH;
             
@@ -2188,6 +2543,7 @@
             const indicator = document.getElementById('heightIndicator');
             indicator.classList.toggle('over', remaining < 0);
             
+            const uLen = getUnit('length');
             // Update status message
             const status = document.getElementById('heightStatus');
             if (status) {
@@ -2195,10 +2551,10 @@
                     status.textContent = '✓ Exact fit';
                     status.style.color = 'var(--accent-safe)';
                 } else if (remaining > 0) {
-                    status.textContent = `Will extrapolate ${remaining.toFixed(0)} ft`;
+                    status.textContent = `Will extrapolate ${remaining.toFixed(0)} ${uLen}`;
                     status.style.color = 'var(--accent-blue)';
                 } else {
-                    status.textContent = `Will trim ${Math.abs(remaining).toFixed(0)} ft`;
+                    status.textContent = `Will trim ${Math.abs(remaining).toFixed(0)} ${uLen}`;
                     status.style.color = 'var(--accent-warning)';
                 }
             }
@@ -2267,23 +2623,27 @@
                 const endElev = cumulativeHeight + segmentTotalHeight;
                 cumulativeHeight = endElev;
                 
+                const uLen = getUnit('length');
+                const uPres = getUnit('pressure');
+                const uWt = getUnit('unitWeight');
+                
                 const html = `
                 <div class="segment-card" data-id="${seg.id}">
                     <div class="segment-header">
                         <div>
                             <span class="segment-title">Segment ${index + 1}</span>
-                            <span class="segment-info">IRA: ${ira.toFixed(1)}° | ${segmentTotalHeight.toFixed(0)} ft total</span>
+                            <span class="segment-info">IRA: ${ira.toFixed(1)}° | ${segmentTotalHeight.toFixed(0)} ${uLen} total</span>
                         </div>
                         ${segments.length > 1 ? `<button class="segment-delete" onclick="removeSegment(${seg.id})">✕</button>` : ''}
                     </div>
                     
                     <div class="segment-elevation-bar">
-                        <span>Elev ${startElev.toFixed(0)}' → ${endElev.toFixed(0)}'</span>
+                        <span>Elev ${startElev.toFixed(0)} → ${endElev.toFixed(0)} ${uLen}</span>
                     </div>
                     
                     <div class="input-row" style="margin-bottom: 0.75rem;">
                         <div class="input-group">
-                            <label class="input-label">Bench Height (ft)</label>
+                            <label class="input-label">Bench Height (${uLen})</label>
                             <input type="number" value="${seg.benchHeight}" min="10" max="200" step="5"
                                    onchange="updateSegment(${seg.id}, 'benchHeight', this.value); renderSegments();">
                         </div>
@@ -2301,14 +2661,14 @@
                                    onchange="updateSegment(${seg.id}, 'benchFaceAngle', this.value); renderSegments();">
                         </div>
                         <div class="input-group">
-                            <label class="input-label">Catch Width (ft)</label>
+                            <label class="input-label">Catch Width (${uLen})</label>
                             <input type="number" value="${seg.catchBenchWidth}" min="0" max="100" step="1"
                                    onchange="updateSegment(${seg.id}, 'catchBenchWidth', this.value); renderSegments();">
                         </div>
                         <div class="input-group">
                             <label class="input-label">Segment Height</label>
                             <div style="padding: 0.6rem; background: var(--bg-primary); border-radius: 3px; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; color: var(--accent-primary);">
-                                ${segmentTotalHeight.toFixed(0)} ft
+                                ${segmentTotalHeight.toFixed(0)} ${uLen}
                             </div>
                         </div>
                     </div>
@@ -2326,7 +2686,7 @@
                     
                     <div class="input-row-3">
                         <div class="input-group">
-                            <label class="input-label">c' (psf)</label>
+                            <label class="input-label">c' (${uPres})</label>
                             <input type="number" value="${seg.cohesion}" min="0" max="10000" step="50"
                                    onchange="updateSegment(${seg.id}, 'cohesion', this.value)">
                         </div>
@@ -2336,7 +2696,7 @@
                                    onchange="updateSegment(${seg.id}, 'frictionAngle', this.value)">
                         </div>
                         <div class="input-group">
-                            <label class="input-label">γ (pcf)</label>
+                            <label class="input-label">γ (${uWt})</label>
                             <input type="number" value="${seg.unitWeight}" min="90" max="180" step="1"
                                    onchange="updateSegment(${seg.id}, 'unitWeight', this.value)">
                         </div>
@@ -2362,7 +2722,7 @@
                         </div>
                         ${seg.stepoutType !== 'none' ? `
                         <div class="input-group" style="margin-bottom: 0;">
-                            <label class="input-label">Additional Width (ft)</label>
+                            <label class="input-label">Additional Width (${uLen})</label>
                             <input type="number" value="${seg.stepoutWidth}" min="0" max="200" step="5"
                                    onchange="updateSegment(${seg.id}, 'stepoutWidth', this.value)">
                         </div>
@@ -2391,7 +2751,7 @@
          * or cuts off if segments exceed total height
          */
         function buildSlopeProfile() {
-            const totalH = parseFloat(document.getElementById('slopeHeight').value);
+            const totalH = fromDisplay(parseFloat(document.getElementById('slopeHeight').value), 'length');
             
             if (!advancedMode || segments.length === 0) {
                 // Simple slope
@@ -2410,28 +2770,26 @@
             }
             
             // Build from segments (bottom to top), drawing each individual bench
+            // Convert segment dimensions to Imperial
             const points = [{ x: 0, y: 0 }];
-            const segmentBoundaries = []; // Track where each segment starts/ends
+            const segmentBoundaries = [];
             let currentX = 0;
             let currentY = 0;
             let reachedTarget = false;
             
             for (let segIdx = 0; segIdx < segments.length && !reachedTarget; segIdx++) {
                 const seg = segments[segIdx];
+                const benchH = fromDisplay(seg.benchHeight, 'length');
+                const catchW = fromDisplay(seg.catchBenchWidth, 'length');
+                const stepoutW = fromDisplay(seg.stepoutWidth || 0, 'length');
                 const faceAngle = seg.benchFaceAngle * Math.PI / 180;
                 const numBenches = seg.numBenches || 1;
                 const segmentStartY = currentY;
                 
-                // Draw each bench in this segment
                 for (let b = 0; b < numBenches && !reachedTarget; b++) {
-                    const isLastBenchInSegment = (b === numBenches - 1);
-                    const isLastSegment = (segIdx === segments.length - 1);
-                    
-                    // Check if this bench would exceed target height
-                    const projectedY = currentY + seg.benchHeight;
+                    const projectedY = currentY + benchH;
                     
                     if (projectedY > totalH) {
-                        // This bench would exceed target - extrapolate partial bench
                         const remainingHeight = totalH - currentY;
                         if (remainingHeight > 0.5) {
                             const partialFaceRun = remainingHeight / Math.tan(faceAngle);
@@ -2441,40 +2799,35 @@
                         }
                         reachedTarget = true;
                     } else {
-                        // Full bench face
-                        const faceRun = seg.benchHeight / Math.tan(faceAngle);
+                        const faceRun = benchH / Math.tan(faceAngle);
                         currentX += faceRun;
-                        currentY += seg.benchHeight;
+                        currentY += benchH;
                         points.push({ x: currentX, y: currentY });
                         
-                        // Add catch bench (horizontal) if not at target height
-                        if (currentY < totalH && seg.catchBenchWidth > 0) {
-                            currentX += seg.catchBenchWidth;
+                        if (currentY < totalH && catchW > 0) {
+                            currentX += catchW;
                             points.push({ x: currentX, y: currentY });
                         }
                         
-                        // Check if we've reached target
                         if (Math.abs(currentY - totalH) < 0.5) {
                             reachedTarget = true;
                         }
                     }
                 }
                 
-                // Record segment boundary
                 segmentBoundaries.push({
                     segmentIndex: segIdx,
                     startY: segmentStartY,
                     endY: currentY,
                     material: {
-                        c: seg.cohesion,
+                        c: fromDisplay(seg.cohesion, 'pressure'),
                         phi: seg.frictionAngle * Math.PI / 180,
-                        gamma: seg.unitWeight
+                        gamma: fromDisplay(seg.unitWeight, 'unitWeight')
                     }
                 });
                 
-                // Add stepout after segment (if not at target height)
-                if (!reachedTarget && seg.stepoutType !== 'none' && seg.stepoutWidth > 0) {
-                    currentX += seg.stepoutWidth;
+                if (!reachedTarget && seg.stepoutType !== 'none' && stepoutW > 0) {
+                    currentX += stepoutW;
                     points.push({ x: currentX, y: currentY });
                 }
             }
@@ -2482,22 +2835,24 @@
             // If segments didn't reach target height, extrapolate using last segment's geometry
             if (currentY < totalH - 0.5 && segments.length > 0) {
                 const lastSeg = segments[segments.length - 1];
+                const benchH = fromDisplay(lastSeg.benchHeight, 'length');
+                const catchW = fromDisplay(lastSeg.catchBenchWidth, 'length');
                 const faceAngle = lastSeg.benchFaceAngle * Math.PI / 180;
                 const remainingHeight = totalH - currentY;
                 
                 // Calculate how many more full benches plus partial
-                const fullBenchesNeeded = Math.floor(remainingHeight / lastSeg.benchHeight);
-                const partialHeight = remainingHeight - (fullBenchesNeeded * lastSeg.benchHeight);
+                const fullBenchesNeeded = Math.floor(remainingHeight / benchH);
+                const partialHeight = remainingHeight - (fullBenchesNeeded * benchH);
                 
                 // Add full benches
                 for (let b = 0; b < fullBenchesNeeded; b++) {
-                    const faceRun = lastSeg.benchHeight / Math.tan(faceAngle);
+                    const faceRun = benchH / Math.tan(faceAngle);
                     currentX += faceRun;
-                    currentY += lastSeg.benchHeight;
+                    currentY += benchH;
                     points.push({ x: currentX, y: currentY });
                     
-                    if (currentY < totalH && lastSeg.catchBenchWidth > 0) {
-                        currentX += lastSeg.catchBenchWidth;
+                    if (currentY < totalH && catchW > 0) {
+                        currentX += catchW;
                         points.push({ x: currentX, y: currentY });
                     }
                 }
@@ -2554,13 +2909,13 @@
         function getMaterialAtY(y, profile) {
             if (!advancedMode || segments.length === 0) {
                 return {
-                    c: parseFloat(document.getElementById('cohesion').value),
+                    c: fromDisplay(parseFloat(document.getElementById('cohesion').value), 'pressure'),
                     phi: parseFloat(document.getElementById('frictionAngle').value) * Math.PI / 180,
-                    gamma: parseFloat(document.getElementById('unitWeight').value)
+                    gamma: fromDisplay(parseFloat(document.getElementById('unitWeight').value), 'unitWeight')
                 };
             }
             
-            // Use segment boundaries if available
+            // Use segment boundaries if available (already in Imperial from buildSlopeProfile)
             if (profile.segmentBoundaries && profile.segmentBoundaries.length > 0) {
                 for (const boundary of profile.segmentBoundaries) {
                     if (y >= boundary.startY && y <= boundary.endY) {
@@ -2575,12 +2930,12 @@
             // Fallback: Find which segment contains this elevation
             let currentY = 0;
             for (const seg of segments) {
-                const segHeight = (seg.benchHeight || 40) * (seg.numBenches || 1);
+                const segHeight = fromDisplay((seg.benchHeight || 40), 'length') * (seg.numBenches || 1);
                 if (y <= currentY + segHeight) {
                     return {
-                        c: seg.cohesion,
+                        c: fromDisplay(seg.cohesion, 'pressure'),
                         phi: seg.frictionAngle * Math.PI / 180,
-                        gamma: seg.unitWeight
+                        gamma: fromDisplay(seg.unitWeight, 'unitWeight')
                     };
                 }
                 currentY += segHeight;
@@ -2589,9 +2944,9 @@
             // Default to last segment
             const lastSeg = segments[segments.length - 1];
             return {
-                c: lastSeg.cohesion,
+                c: fromDisplay(lastSeg.cohesion, 'pressure'),
                 phi: lastSeg.frictionAngle * Math.PI / 180,
-                gamma: lastSeg.unitWeight
+                gamma: fromDisplay(lastSeg.unitWeight, 'unitWeight')
             };
         }
 
@@ -2865,7 +3220,7 @@
                 if (entryMidX >= exitMidX) {
                     alert('No valid failure surfaces found.\n\nThe entry zone appears to be at or above the exit zone. For a valid circular failure, the entry (toe) must be below the exit (crest) on the slope.\n\nTry moving the entry zone downslope or the exit zone upslope.');
                 } else {
-                    alert('No valid failure surfaces found within the specified constraints.\n\nTry:\n• Increasing max depth (currently ' + maxDepth.toFixed(0) + ' ft)\n• Widening the radius range (' + minRadius + ' - ' + maxRadius + ' ft)\n• Widening the search zones\n• Increasing the grid density');
+                    alert('No valid failure surfaces found within the specified constraints.\n\nTry:\n• Increasing max depth (currently ' + toDisplay(maxDepth, 'length').toFixed(0) + ' ' + getUnit('length') + ')\n• Widening the radius range (' + toDisplay(minRadius, 'length').toFixed(0) + ' - ' + toDisplay(maxRadius, 'length').toFixed(0) + ' ' + getUnit('length') + ')\n• Widening the search zones\n• Increasing the grid density');
                 }
                 return;
             }
@@ -2935,22 +3290,41 @@
             else fosStatus = 'Acceptable';
             document.getElementById('fosStatus').innerHTML = fosStatus;
             
-            // Critical surface geometry
-            document.getElementById('entryPoint').innerHTML = `${c.entryX >= 0 ? '+' : ''}${c.entryX.toFixed(1)}' from toe`;
-            document.getElementById('exitPoint').innerHTML = `${(c.exitX - c.xCrest) >= 0 ? '+' : ''}${(c.exitX - c.xCrest).toFixed(1)}' from crest`;
-            document.getElementById('criticalDepth').innerHTML = c.maxDepth.toFixed(1) + ' ft';
-            document.getElementById('surfaceLength').innerHTML = c.totalArcLength.toFixed(0) + ' ft';
-            document.getElementById('circleRadius').innerHTML = c.radius.toFixed(1) + ' ft';
-            document.getElementById('circleCenter').innerHTML = `(${c.centerX.toFixed(0)}, ${c.centerY.toFixed(0)})`;
+            // Critical surface geometry (internal values are imperial, convert for display)
+            const uLen = getUnit('length');
+            const entryDisp = toDisplay(c.entryX, 'length');
+            const exitFromCrest = toDisplay(c.exitX - c.xCrest, 'length');
+            document.getElementById('entryPoint').innerHTML = `${entryDisp >= 0 ? '+' : ''}${entryDisp.toFixed(1)} ${uLen} from toe`;
+            document.getElementById('exitPoint').innerHTML = `${exitFromCrest >= 0 ? '+' : ''}${exitFromCrest.toFixed(1)} ${uLen} from crest`;
+            document.getElementById('criticalDepth').innerHTML = toDisplay(c.maxDepth, 'length').toFixed(1) + ' ' + uLen;
+            document.getElementById('surfaceLength').innerHTML = toDisplay(c.totalArcLength, 'length').toFixed(0) + ' ' + uLen;
+            document.getElementById('circleRadius').innerHTML = toDisplay(c.radius, 'length').toFixed(1) + ' ' + uLen;
+            document.getElementById('circleCenter').innerHTML = `(${toDisplay(c.centerX, 'length').toFixed(0)}, ${toDisplay(c.centerY, 'length').toFixed(0)})`;
             
             // Mass estimation
             const area = c.slices.reduce((sum, s) => sum + s.width * s.height, 0);
-            document.getElementById('crossSectionArea').innerHTML = area.toFixed(0) + ' ft²';
-            document.getElementById('slideWeight').innerHTML = (c.totalWeight / 2000).toFixed(0) + ' tons/ft';
+            const areaDisp = toDisplay(area, 'area');
+            const uArea = getUnit('area');
+            document.getElementById('crossSectionArea').innerHTML = areaDisp.toFixed(0) + ' ' + uArea;
+            
+            if (unitSystem === 'metric') {
+                // Convert weight (lb) to kN: lb * 4.44822e-3 = kN; per ft → per m: / 0.3048
+                const weightKNperM = (c.totalWeight * 4.44822e-3) / 0.3048;
+                document.getElementById('slideWeight').innerHTML = weightKNperM.toFixed(0) + ' kN/m';
+            } else {
+                document.getElementById('slideWeight').innerHTML = (c.totalWeight / 2000).toFixed(0) + ' tons/ft';
+            }
             
             // Force summary
-            document.getElementById('sumResisting').innerHTML = c.sumResisting.toFixed(0) + ' lb/ft';
-            document.getElementById('sumDriving').innerHTML = c.sumDriving.toFixed(0) + ' lb/ft';
+            if (unitSystem === 'metric') {
+                const resistKN = c.sumResisting * 0.01459;
+                const drivingKN = c.sumDriving * 0.01459;
+                document.getElementById('sumResisting').innerHTML = resistKN.toFixed(0) + ' kN/m';
+                document.getElementById('sumDriving').innerHTML = drivingKN.toFixed(0) + ' kN/m';
+            } else {
+                document.getElementById('sumResisting').innerHTML = c.sumResisting.toFixed(0) + ' lb/ft';
+                document.getElementById('sumDriving').innerHTML = c.sumDriving.toFixed(0) + ' lb/ft';
+            }
             
             window.currentCrossSection = area;
             window.currentMass = c.totalWeight / 2000;
@@ -2970,12 +3344,24 @@
         }
 
         function updateVolumeEstimate() {
-            const w = parseFloat(document.getElementById('failureWidth').value) || 100;
+            const w = parseFloat(document.getElementById('failureWidth').value) || (unitSystem === 'metric' ? 30 : 100);
             if (window.currentCrossSection) {
-                const vol = window.currentCrossSection * w / 27;
-                const tons = window.currentMass * w;
-                document.getElementById('totalVolume').innerHTML = Math.round(vol).toLocaleString() + ' yd³';
-                document.getElementById('totalTonnage').innerHTML = Math.round(tons).toLocaleString() + ' tons';
+                // currentCrossSection is in ft², currentMass is in tons (Imperial short tons)
+                const wImperial = unitSystem === 'metric' ? fromDisplay(w, 'length') : w;
+                
+                if (unitSystem === 'metric') {
+                    // Convert to m³ and tonnes
+                    const areaM2 = window.currentCrossSection * 0.09290;
+                    const volM3 = areaM2 * w; // w is already in meters from the input
+                    const tonnes = window.currentMass * 0.9072 * (w / toDisplay(1, 'length')); // scale by width ratio
+                    document.getElementById('totalVolume').innerHTML = Math.round(volM3).toLocaleString() + ' m³';
+                    document.getElementById('totalTonnage').innerHTML = Math.round(tonnes).toLocaleString() + ' tonnes';
+                } else {
+                    const vol = window.currentCrossSection * w / 27;
+                    const tons = window.currentMass * w;
+                    document.getElementById('totalVolume').innerHTML = Math.round(vol).toLocaleString() + ' yd³';
+                    document.getElementById('totalTonnage').innerHTML = Math.round(tons).toLocaleString() + ' tons';
+                }
             }
         }
 
@@ -2984,24 +3370,29 @@
             document.getElementById('calcPanel').style.display = 'block';
             
             const { critical, inputs } = lastAnalysisResult;
+            const uPres = getUnit('pressure');
+            const uWt = getUnit('unitWeight');
             
             // Build input summary
             let inputHtml = '';
             if (inputs.advancedMode && inputs.segments.length > 0) {
-                inputHtml = inputs.segments.map((s, i) => `
+                inputHtml = inputs.segments.map((s, i) => {
+                    const cDisp = toDisplay(s.cohesion, 'pressure').toFixed(0);
+                    const gDisp = toDisplay(s.unitWeight, 'unitWeight').toFixed(1);
+                    return `
                     <div class="equation-term">
                         <span class="symbol">Seg ${i+1}</span>
-                        <div class="description">c'=${s.cohesion}psf, φ'=${s.frictionAngle}°, γ=${s.unitWeight}pcf</div>
+                        <div class="description">c'=${cDisp} ${uPres}, φ'=${s.frictionAngle}°, γ=${gDisp} ${uWt}</div>
                     </div>
-                `).join('');
+                `}).join('');
             } else {
                 const c = parseFloat(document.getElementById('cohesion').value);
                 const phi = parseFloat(document.getElementById('frictionAngle').value);
                 const gamma = parseFloat(document.getElementById('unitWeight').value);
                 inputHtml = `
-                    <div class="equation-term"><span class="symbol">c'</span> <span class="value">${c} psf</span></div>
+                    <div class="equation-term"><span class="symbol">c'</span> <span class="value">${c} ${uPres}</span></div>
                     <div class="equation-term"><span class="symbol">φ'</span> <span class="value">${phi}°</span></div>
-                    <div class="equation-term"><span class="symbol">γ</span> <span class="value">${gamma} pcf</span></div>
+                    <div class="equation-term"><span class="symbol">γ</span> <span class="value">${gamma} ${uWt}</span></div>
                 `;
             }
             document.getElementById('inputSummary').innerHTML = inputHtml;
@@ -3199,7 +3590,7 @@
             // Height label
             ctx.fillStyle = '#a9b1d6';
             ctx.font = 'bold 13px JetBrains Mono';
-            ctx.fillText(`H=${H.toFixed(0)}'`, toX(0)-50, toY(H/2));
+            ctx.fillText(`H=${toDisplay(H, 'length').toFixed(0)} ${getUnit('length')}`, toX(0)-50, toY(H/2));
             
             // FoS label
             ctx.fillStyle = '#ff9e64';
@@ -3334,8 +3725,8 @@
                 ctx.fillText(`IRA: ${ira.toFixed(1)}°`, toX(labelX + 12), toY(midY) - 5);
                 ctx.font = '9px JetBrains Mono';
                 ctx.fillStyle = 'rgba(192, 202, 245, 0.8)';
-                ctx.fillText(`${benchCount}× ${seg.benchHeight}' benches`, toX(labelX + 12), toY(midY) + 8);
-                ctx.fillText(`Face: ${seg.benchFaceAngle}° | Catch: ${seg.catchBenchWidth}'`, toX(labelX + 12), toY(midY) + 20);
+                ctx.fillText(`${benchCount}× ${seg.benchHeight} ${getUnit('length')} benches`, toX(labelX + 12), toY(midY) + 8);
+                ctx.fillText(`Face: ${seg.benchFaceAngle}° | Catch: ${seg.catchBenchWidth} ${getUnit('length')}`, toX(labelX + 12), toY(midY) + 20);
                 
                 // Draw stepout annotation if present
                 if (seg.stepoutType !== 'none' && seg.stepoutWidth > 0 && currentY < H) {
@@ -3378,8 +3769,8 @@
                     ctx.fillStyle = '#7aa2f7';
                     ctx.font = 'bold 9px JetBrains Mono';
                     const stepoutLabel = seg.stepoutType === 'ramp' ? 'RAMP' : 'GEOTECH';
-                    const labelWidth = ctx.measureText(`${stepoutLabel}: ${seg.stepoutWidth}'`).width;
-                    ctx.fillText(`${stepoutLabel}: ${seg.stepoutWidth}'`, 
+                    const labelWidth = ctx.measureText(`${stepoutLabel}: ${seg.stepoutWidth} ${getUnit('length')}`).width;
+                    ctx.fillText(`${stepoutLabel}: ${seg.stepoutWidth} ${getUnit('length')}`, 
                         toX(stepoutStartX + seg.stepoutWidth/2) - labelWidth/2, 
                         toY(currentY) - 20);
                 }
@@ -3406,7 +3797,7 @@
                 ctx.stroke();
                 
                 ctx.fillStyle = 'rgba(169, 177, 214, 0.7)';
-                ctx.fillText(`${elev}'`, toX(tickX) - 28, toY(elev) + 3);
+                ctx.fillText(`${toDisplay(elev, 'length').toFixed(0)}`, toX(tickX) - 28, toY(elev) + 3);
             }
             
             // Draw "ELEV" label
@@ -3775,7 +4166,7 @@
             // Labels
             ctx.fillStyle = '#a9b1d6';
             ctx.font = 'bold 13px JetBrains Mono';
-            ctx.fillText(`H=${H.toFixed(0)}'`, toX(0)-50, toY(H/2));
+            ctx.fillText(`H=${toDisplay(H, 'length').toFixed(0)} ${getUnit('length')}`, toX(0)-50, toY(H/2));
             
             ctx.fillStyle = '#ff9e64';
             ctx.font = 'bold 15px JetBrains Mono';
@@ -3858,10 +4249,10 @@
 
         const sensitivityParams = {
             cohesion: { 
-                label: "Cohesion, c' (psf)", 
-                unit: 'psf',
-                defaultMin: 0, 
-                defaultMax: 1000,
+                get label() { return unitSystem === 'metric' ? "Cohesion, c' (kPa)" : "Cohesion, c' (psf)"; },
+                get unit() { return getUnit('pressure'); },
+                get defaultMin() { return unitSystem === 'metric' ? 0 : 0; },
+                get defaultMax() { return unitSystem === 'metric' ? 50 : 1000; },
                 getValue: () => parseFloat(document.getElementById('cohesion').value),
                 setValue: (v) => document.getElementById('cohesion').value = v
             },
@@ -3877,18 +4268,18 @@
                 }
             },
             unitWeight: { 
-                label: "Unit Weight, γ (pcf)", 
-                unit: 'pcf',
-                defaultMin: 100, 
-                defaultMax: 160,
+                get label() { return unitSystem === 'metric' ? "Unit Weight, γ (kN/m³)" : "Unit Weight, γ (pcf)"; },
+                get unit() { return getUnit('unitWeight'); },
+                get defaultMin() { return unitSystem === 'metric' ? 16 : 100; },
+                get defaultMax() { return unitSystem === 'metric' ? 26 : 160; },
                 getValue: () => parseFloat(document.getElementById('unitWeight').value),
                 setValue: (v) => document.getElementById('unitWeight').value = v
             },
             slopeHeight: { 
-                label: "Slope Height, H (ft)", 
-                unit: 'ft',
-                defaultMin: 50, 
-                defaultMax: 300,
+                get label() { return unitSystem === 'metric' ? "Slope Height, H (m)" : "Slope Height, H (ft)"; },
+                get unit() { return getUnit('length'); },
+                get defaultMin() { return unitSystem === 'metric' ? 15 : 50; },
+                get defaultMax() { return unitSystem === 'metric' ? 90 : 300; },
                 getValue: () => parseFloat(document.getElementById('slopeHeight').value),
                 setValue: (v) => document.getElementById('slopeHeight').value = v
             },
@@ -3904,14 +4295,14 @@
                 }
             },
             waterTable: { 
-                label: "Water Table Depth (ft)", 
-                unit: 'ft',
-                defaultMin: 0, 
-                defaultMax: 200,
+                get label() { return unitSystem === 'metric' ? "Water Table Depth (m)" : "Water Table Depth (ft)"; },
+                get unit() { return getUnit('length'); },
+                get defaultMin() { return 0; },
+                get defaultMax() { return unitSystem === 'metric' ? 60 : 200; },
                 getValue: () => parseFloat(document.getElementById('waterTable').value),
                 setValue: (v) => {
                     document.getElementById('waterTable').value = v;
-                    document.getElementById('waterTableValue').textContent = v + ' ft';
+                    document.getElementById('waterTableValue').textContent = v + ' ' + getUnit('length');
                 },
                 requiresModel: 'watertable'
             },
@@ -4317,6 +4708,7 @@
                 // Metadata
                 exportDate: new Date().toISOString(),
                 version: '1.0',
+                unitSystem: unitSystem,
                 
                 // Geometry
                 slopeHeight: document.getElementById('slopeHeight').value,
@@ -4440,6 +4832,17 @@
         }
         
         function applyImportedParameters(params) {
+            // Switch to imported unit system if specified
+            if (params.unitSystem && params.unitSystem !== unitSystem) {
+                const toggle = document.getElementById('unitToggle');
+                if (params.unitSystem === 'metric') {
+                    toggle.checked = true;
+                } else {
+                    toggle.checked = false;
+                }
+                setUnitSystem(params.unitSystem);
+            }
+            
             // Apply geometry
             if (params.slopeHeight) document.getElementById('slopeHeight').value = params.slopeHeight;
             if (params.slopeAngle) {
@@ -4463,7 +4866,7 @@
             }
             if (params.waterTable) {
                 document.getElementById('waterTable').value = params.waterTable;
-                document.getElementById('waterTableValue').textContent = params.waterTable + ' ft';
+                document.getElementById('waterTableValue').textContent = params.waterTable + ' ' + getUnit('length');
             }
             if (params.ruCoeff) {
                 document.getElementById('ruCoeff').value = params.ruCoeff;
@@ -4589,9 +4992,10 @@
             
             // Pore pressure description
             let ppDesc = 'None (Dry)';
-            if (poreParams.model === 'watertable') ppDesc = `Water Table at ${poreParams.waterTableDepth} ft below crest`;
+            const uLenPdf = getUnit('length');
+            if (poreParams.model === 'watertable') ppDesc = `Water Table at ${toDisplay(poreParams.waterTableDepth, 'length').toFixed(1)} ${uLenPdf} below crest`;
             else if (poreParams.model === 'ru') ppDesc = `Ru = ${poreParams.ru}`;
-            else if (poreParams.model === 'combined') ppDesc = `Water Table at ${poreParams.waterTableDepth} ft + Ru = ${poreParams.ru}`;
+            else if (poreParams.model === 'combined') ppDesc = `Water Table at ${toDisplay(poreParams.waterTableDepth, 'length').toFixed(1)} ${uLenPdf} + Ru = ${poreParams.ru}`;
             
             const html = `
 <!DOCTYPE html>
@@ -4830,7 +5234,7 @@
         </div>
         <div class="report-title">
             <h1>Slope Stability Analysis</h1>
-            <div class="subtitle">Modified Bishop's Simplified Method</div>
+            <div class="subtitle">Modified Bishop's Simplified Method • ${unitSystem === 'metric' ? 'SI/Metric Units' : 'Imperial Units'}</div>
             <div class="date">Generated: ${new Date().toLocaleString()}</div>
         </div>
     </div>
@@ -4851,18 +5255,18 @@
             <div class="section">
                 <div class="section-header">📐 Slope Geometry</div>
                 <table class="param-table">
-                    <tr><td>Overall Slope Height (H)</td><td>${params.slopeHeight} ft</td></tr>
+                    <tr><td>Overall Slope Height (H)</td><td>${params.slopeHeight} ${uLenPdf}</td></tr>
                     <tr><td>Overall Slope Angle (β)</td><td>${params.slopeAngle}°</td></tr>
-                    <tr><td>Horizontal Extent</td><td>${profile.xCrest.toFixed(1)} ft</td></tr>
+                    <tr><td>Horizontal Extent</td><td>${toDisplay(profile.xCrest, 'length').toFixed(1)} ${uLenPdf}</td></tr>
                 </table>
             </div>
             
             <div class="section">
                 <div class="section-header">🪨 Material Properties</div>
                 <table class="param-table">
-                    <tr><td>Cohesion (c')</td><td>${params.cohesion} psf</td></tr>
+                    <tr><td>Cohesion (c')</td><td>${params.cohesion} ${getUnit('pressure')}</td></tr>
                     <tr><td>Friction Angle (φ')</td><td>${params.frictionAngle}°</td></tr>
-                    <tr><td>Unit Weight (γ)</td><td>${params.unitWeight} pcf</td></tr>
+                    <tr><td>Unit Weight (γ)</td><td>${params.unitWeight} ${getUnit('unitWeight')}</td></tr>
                 </table>
             </div>
             
@@ -4878,23 +5282,28 @@
             <div class="section">
                 <div class="section-header">🎯 Critical Surface Geometry</div>
                 <table class="param-table">
-                    <tr><td>Entry Point</td><td>${c.entryX >= 0 ? '+' : ''}${c.entryX.toFixed(1)} ft from toe</td></tr>
-                    <tr><td>Exit Point</td><td>${(c.exitX - profile.xCrest) >= 0 ? '+' : ''}${(c.exitX - profile.xCrest).toFixed(1)} ft from crest</td></tr>
-                    <tr><td>Maximum Depth</td><td>${c.maxDepth.toFixed(1)} ft</td></tr>
-                    <tr><td>Arc Length</td><td>${c.totalArcLength.toFixed(0)} ft</td></tr>
-                    <tr><td>Circle Radius</td><td>${c.radius.toFixed(1)} ft</td></tr>
-                    <tr><td>Circle Center</td><td>(${c.centerX.toFixed(0)}, ${c.centerY.toFixed(0)})</td></tr>
+                    <tr><td>Entry Point</td><td>${toDisplay(c.entryX, 'length') >= 0 ? '+' : ''}${toDisplay(c.entryX, 'length').toFixed(1)} ${uLenPdf} from toe</td></tr>
+                    <tr><td>Exit Point</td><td>${toDisplay(c.exitX - profile.xCrest, 'length') >= 0 ? '+' : ''}${toDisplay(c.exitX - profile.xCrest, 'length').toFixed(1)} ${uLenPdf} from crest</td></tr>
+                    <tr><td>Maximum Depth</td><td>${toDisplay(c.maxDepth, 'length').toFixed(1)} ${uLenPdf}</td></tr>
+                    <tr><td>Arc Length</td><td>${toDisplay(c.totalArcLength, 'length').toFixed(0)} ${uLenPdf}</td></tr>
+                    <tr><td>Circle Radius</td><td>${toDisplay(c.radius, 'length').toFixed(1)} ${uLenPdf}</td></tr>
+                    <tr><td>Circle Center</td><td>(${toDisplay(c.centerX, 'length').toFixed(0)}, ${toDisplay(c.centerY, 'length').toFixed(0)})</td></tr>
                 </table>
             </div>
             
             <div class="section">
                 <div class="section-header">📊 Failure Mass Estimation</div>
                 <table class="param-table">
-                    <tr><td>Cross-Section Area</td><td>${area.toFixed(0)} ft²</td></tr>
-                    <tr><td>Slide Weight (2D)</td><td>${(c.totalWeight / 2000).toFixed(0)} tons/ft</td></tr>
-                    <tr><td>Assumed Width</td><td>${failureWidth} ft</td></tr>
-                    <tr><td>Estimated Volume</td><td>${Math.round(volume).toLocaleString()} yd³</td></tr>
-                    <tr><td>Estimated Tonnage</td><td>${Math.round(tonnage).toLocaleString()} tons</td></tr>
+                    <tr><td>Cross-Section Area</td><td>${toDisplay(area, 'area').toFixed(0)} ${getUnit('area')}</td></tr>
+                    ${unitSystem === 'metric' 
+                        ? `<tr><td>Slide Weight (2D)</td><td>${((c.totalWeight * 4.44822e-3) / 0.3048).toFixed(0)} kN/m</td></tr>
+                           <tr><td>Assumed Width</td><td>${failureWidth} m</td></tr>
+                           <tr><td>Estimated Volume</td><td>${Math.round(area * 0.09290 * failureWidth).toLocaleString()} m³</td></tr>
+                           <tr><td>Estimated Tonnage</td><td>${Math.round(tonnage * 0.9072).toLocaleString()} tonnes</td></tr>`
+                        : `<tr><td>Slide Weight (2D)</td><td>${(c.totalWeight / 2000).toFixed(0)} tons/ft</td></tr>
+                           <tr><td>Assumed Width</td><td>${failureWidth} ft</td></tr>
+                           <tr><td>Estimated Volume</td><td>${Math.round(volume).toLocaleString()} yd³</td></tr>
+                           <tr><td>Estimated Tonnage</td><td>${Math.round(tonnage).toLocaleString()} tons</td></tr>`}
                 </table>
             </div>
         </div>
@@ -4910,13 +5319,13 @@
             </tr>
             <tr>
                 <td>Total Resisting Force (Σ Resisting)</td>
-                <td>${c.sumResisting.toFixed(0)}</td>
-                <td>lb/ft</td>
+                <td>${unitSystem === 'metric' ? (c.sumResisting * 0.01459).toFixed(0) : c.sumResisting.toFixed(0)}</td>
+                <td>${unitSystem === 'metric' ? 'kN/m' : 'lb/ft'}</td>
             </tr>
             <tr>
                 <td>Total Driving Force (Σ Driving)</td>
-                <td>${c.sumDriving.toFixed(0)}</td>
-                <td>lb/ft</td>
+                <td>${unitSystem === 'metric' ? (c.sumDriving * 0.01459).toFixed(0) : c.sumDriving.toFixed(0)}</td>
+                <td>${unitSystem === 'metric' ? 'kN/m' : 'lb/ft'}</td>
             </tr>
             <tr>
                 <td>Factor of Safety (Σ Resisting / Σ Driving)</td>
@@ -4938,9 +5347,9 @@
             </div>
             <div class="column">
                 <table class="param-table">
-                    <tr><td>Radius Range</td><td>${params.minRadius} - ${params.maxRadius} ft</td></tr>
-                    <tr><td>Entry Zone</td><td>${params.toeMin} to ${params.toeMax} ft</td></tr>
-                    <tr><td>Exit Zone</td><td>${params.crestMin} to ${params.crestMax} ft</td></tr>
+                    <tr><td>Radius Range</td><td>${params.minRadius} - ${params.maxRadius} ${uLenPdf}</td></tr>
+                    <tr><td>Entry Zone</td><td>${params.toeMin} to ${params.toeMax} ${uLenPdf}</td></tr>
+                    <tr><td>Exit Zone</td><td>${params.crestMin} to ${params.crestMax} ${uLenPdf}</td></tr>
                 </table>
             </div>
         </div>
@@ -5164,7 +5573,7 @@
                 // Height label
                 ctx.fillStyle = '#333333';
                 ctx.font = 'bold 13px Arial';
-                ctx.fillText(`H = ${H.toFixed(0)} ft`, toX(-15), toY(H/2));
+                ctx.fillText(`H = ${toDisplay(H, 'length').toFixed(0)} ${getUnit('length')}`, toX(-15), toY(H/2));
                 
                 // Toe and Crest labels
                 ctx.fillStyle = '#059669';
@@ -5175,18 +5584,18 @@
                 // Entry/Exit labels
                 ctx.fillStyle = '#dc2626';
                 ctx.font = '11px Arial';
-                ctx.fillText(`Entry: ${critical.entryX.toFixed(1)} ft`, toX(critical.entryX) - 30, toY(critical.entryY) + 25);
-                ctx.fillText(`Exit: ${critical.exitX.toFixed(1)} ft`, toX(critical.exitX) - 20, toY(critical.exitY) - 15);
+                ctx.fillText(`Entry: ${toDisplay(critical.entryX, 'length').toFixed(1)} ${getUnit('length')}`, toX(critical.entryX) - 30, toY(critical.entryY) + 25);
+                ctx.fillText(`Exit: ${toDisplay(critical.exitX, 'length').toFixed(1)} ${getUnit('length')}`, toX(critical.exitX) - 20, toY(critical.exitY) - 15);
                 
                 // Depth label
                 ctx.fillStyle = '#f59e0b';
                 ctx.font = '11px Arial';
-                ctx.fillText(`Depth: ${critical.maxDepth.toFixed(1)} ft`, toX(depthX) + 10, toY(surfaceY - critical.maxDepth/2));
+                ctx.fillText(`Depth: ${toDisplay(critical.maxDepth, 'length').toFixed(1)} ${getUnit('length')}`, toX(depthX) + 10, toY(surfaceY - critical.maxDepth/2));
                 
                 // Radius label
                 ctx.fillStyle = '#7c3aed';
                 ctx.font = '11px Arial';
-                ctx.fillText(`R = ${critical.radius.toFixed(0)} ft`, toX(critical.centerX) + 10, toY(critical.centerY) - 10);
+                ctx.fillText(`R = ${toDisplay(critical.radius, 'length').toFixed(0)} ${getUnit('length')}`, toX(critical.centerX) + 10, toY(critical.centerY) - 10);
                 
                 // Scale bar
                 const scaleBarLength = 100;
@@ -5208,7 +5617,7 @@
                 
                 ctx.fillStyle = '#333333';
                 ctx.font = '11px Arial';
-                ctx.fillText(`${scaleBarLength} ft`, margin + (scaleBarLength * scale)/2 - 20, scaleBarY + 20);
+                ctx.fillText(`${toDisplay(scaleBarLength, 'length').toFixed(0)} ${getUnit('length')}`, margin + (scaleBarLength * scale)/2 - 20, scaleBarY + 20);
                 
                 resolve(canvas.toDataURL('image/png'));
             });
