@@ -186,6 +186,29 @@
             margin-top: 0.2rem;
         }
 
+        .leps-info {
+            background: rgba(0, 212, 170, 0.06);
+            border: 1px solid rgba(0, 212, 170, 0.2);
+            border-radius: 4px;
+            padding: 0.6rem 0.8rem;
+            margin-top: 0.5rem;
+            font-size: 0.72rem;
+            color: var(--text-dim);
+            line-height: 1.5;
+        }
+        .leps-info .leps-equation {
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--accent-primary);
+            font-size: 0.75rem;
+            margin: 0.3rem 0;
+        }
+        .strength-model-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.75rem;
+            margin-bottom: 1rem;
+        }
+
         input[type="number"], input[type="range"], select {
             width: 100%;
             background: var(--bg-tertiary);
@@ -1267,7 +1290,7 @@
         </div>
         <div class="header-method">
             <div class="unit-toggle-container">
-                <span style="font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; color: var(--text-dim); margin-right: 0.5rem;">
+                <span id="headerMethodLabel" style="font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; color: var(--text-dim); margin-right: 0.5rem;">
                     Modified Bishop's Method •
                 </span>
                 <span class="unit-label active" id="imperialLabel" onclick="setUnitSystem('imperial')">IMP</span>
@@ -1350,6 +1373,16 @@
                     </select>
                 </div>
 
+                <div class="strength-model-row">
+                    <div class="input-group" style="margin-bottom: 0;">
+                        <label class="input-label">Strength Model</label>
+                        <select id="strengthModel" onchange="updateStrengthModel()">
+                            <option value="mohr_coulomb">Mohr-Coulomb</option>
+                            <option value="leps">Leps (Nonlinear)</option>
+                        </select>
+                    </div>
+                </div>
+
                 <div class="input-row">
                     <div class="input-group">
                         <label class="input-label">Cohesion, c' (psf)</label>
@@ -1361,12 +1394,40 @@
                     </div>
                 </div>
 
-                <div class="input-group">
+                <div class="input-group" id="mcFrictionGroup">
                     <label class="input-label">
                         Friction Angle, φ' (degrees)
                         <span class="range-value" id="frictionAngleValue">30°</span>
                     </label>
                     <input type="range" id="frictionAngle" value="30" min="0" max="50" step="1">
+                </div>
+
+                <!-- Leps Nonlinear Strength Parameters (hidden by default) -->
+                <div id="lepsParams" style="display: none;">
+                    <div class="input-row">
+                        <div class="input-group">
+                            <label class="input-label">
+                                φ₀ — Friction at 1 atm (degrees)
+                                <span class="range-value" id="lepsPhi0Value">50°</span>
+                            </label>
+                            <input type="range" id="lepsPhi0" value="50" min="30" max="60" step="1"
+                                oninput="document.getElementById('lepsPhi0Value').textContent = this.value + '°'">
+                        </div>
+                        <div class="input-group">
+                            <label class="input-label">
+                                Δφ — Reduction per log cycle (degrees)
+                                <span class="range-value" id="lepsDeltaPhiValue">10°</span>
+                            </label>
+                            <input type="range" id="lepsDeltaPhi" value="10" min="3" max="20" step="1"
+                                oninput="document.getElementById('lepsDeltaPhiValue').textContent = this.value + '°'">
+                        </div>
+                    </div>
+                    <div class="leps-info">
+                        <div class="leps-equation">φ(σn) = φ₀ − Δφ · log₁₀(σn / pₐ)</div>
+                        Leps (1970) nonlinear envelope for rockfill and waste rock. Friction angle decreases with increasing normal stress.
+                        pₐ = atmospheric pressure (<span id="lepsPaDisplay">2,116 psf</span>).
+                        <span id="lepsPreview" style="display:block; margin-top:0.3rem; color: var(--accent-blue);"></span>
+                    </div>
                 </div>
             </div>
 
@@ -1699,10 +1760,10 @@
                 <div class="panel-header">Modified Bishop's Method - Calculation Details</div>
                 
                 <div class="equation-box">
-                    <div class="equation-main">
+                    <div class="equation-main" id="bishopEquation">
                         FoS = Σ [ (c'·b + (W - u·b)·tan φ') / m<sub>α</sub> ] / Σ [ W·sin α ]
                     </div>
-                    <div style="text-align: center; color: var(--text-dim); font-size: 0.8rem;">
+                    <div id="bishopMalpha" style="text-align: center; color: var(--text-dim); font-size: 0.8rem;">
                         m<sub>α</sub> = cos α + (sin α · tan φ') / FoS
                     </div>
                     <div class="equation-terms" id="inputSummary"></div>
@@ -1747,6 +1808,8 @@
                                 <option value="cohesion">Cohesion, c' (psf)</option>
                                 <option value="frictionAngle">Friction Angle, φ' (degrees)</option>
                                 <option value="unitWeight">Unit Weight, γ (pcf)</option>
+                                <option value="lepsPhi0">Leps φ₀ — Friction at 1 atm (degrees)</option>
+                                <option value="lepsDeltaPhi">Leps Δφ — Reduction per log cycle (degrees)</option>
                             </optgroup>
                             <optgroup label="Geometry">
                                 <option value="slopeHeight">Slope Height, H (ft)</option>
@@ -1817,6 +1880,20 @@
             soft_clay: { cohesion: 300, friction: 15, weight: 115 },
             waste_rock: { cohesion: 200, friction: 35, weight: 130 },
             heap_leach: { cohesion: 300, friction: 32, weight: 115 }
+        };
+
+        // Leps nonlinear strength presets (phi0 in degrees, deltaPhi in degrees per log cycle)
+        const lepsPresets = {
+            waste_rock:  { phi0: 50, deltaPhi: 10, cohesion: 0,   weight: 130 },
+            heap_leach:  { phi0: 48, deltaPhi: 10, cohesion: 0,   weight: 115 },
+            dense_sand:  { phi0: 52, deltaPhi: 8,  cohesion: 0,   weight: 130 },
+            loose_sand:  { phi0: 45, deltaPhi: 9,  cohesion: 0,   weight: 110 }
+        };
+        const lepsPresetsMetric = {
+            waste_rock:  { phi0: 50, deltaPhi: 10, cohesion: 0,   weight: 20.4 },
+            heap_leach:  { phi0: 48, deltaPhi: 10, cohesion: 0,   weight: 18.1 },
+            dense_sand:  { phi0: 52, deltaPhi: 8,  cohesion: 0,   weight: 20.4 },
+            loose_sand:  { phi0: 45, deltaPhi: 9,  cohesion: 0,   weight: 17.3 }
         };
 
         // ============================================
@@ -2021,6 +2098,9 @@
             setLabelText('cohesion', `Cohesion, c' (${P})`);
             setLabelText('unitWeight', `Unit Weight, γ (${UW})`);
             
+            // Leps preview update
+            updateLepsPreview();
+            
             // Water table
             const wtEl = document.getElementById('waterTable');
             if (wtEl) {
@@ -2112,6 +2192,14 @@
         });
         document.getElementById('frictionAngle').addEventListener('input', function() {
             document.getElementById('frictionAngleValue').textContent = this.value + '°';
+        });
+        document.getElementById('lepsPhi0').addEventListener('input', function() {
+            document.getElementById('lepsPhi0Value').textContent = this.value + '°';
+            updateLepsPreview();
+        });
+        document.getElementById('lepsDeltaPhi').addEventListener('input', function() {
+            document.getElementById('lepsDeltaPhiValue').textContent = this.value + '°';
+            updateLepsPreview();
         });
         document.getElementById('waterTable').addEventListener('input', function() {
             document.getElementById('waterTableValue').textContent = this.value + ' ' + getUnit('length');
@@ -2504,6 +2592,45 @@
 
         function updateMaterialProperties() {
             const type = document.getElementById('materialType').value;
+            const strengthModel = document.getElementById('strengthModel').value;
+            
+            if (strengthModel === 'leps') {
+                // Use Leps presets if available
+                const lepsDb = (unitSystem === 'metric') ? lepsPresetsMetric : lepsPresets;
+                if (type !== 'custom' && lepsDb[type]) {
+                    const lp = lepsDb[type];
+                    document.getElementById('cohesion').value = lp.cohesion;
+                    document.getElementById('unitWeight').value = lp.weight;
+                    document.getElementById('lepsPhi0').value = lp.phi0;
+                    document.getElementById('lepsPhi0Value').textContent = lp.phi0 + '°';
+                    document.getElementById('lepsDeltaPhi').value = lp.deltaPhi;
+                    document.getElementById('lepsDeltaPhiValue').textContent = lp.deltaPhi + '°';
+                    // Also set MC friction to the 1-atm value for fallback
+                    document.getElementById('frictionAngle').value = lp.phi0;
+                    document.getElementById('frictionAngleValue').textContent = lp.phi0 + '°';
+                    updateLepsPreview();
+                    return;
+                }
+                // For materials without Leps presets, fall through to MC database
+                // but still populate the Leps fields from the MC friction angle
+                const db = (unitSystem === 'metric' && materialDatabaseMetric[type]) ? materialDatabaseMetric : materialDatabase;
+                if (type !== 'custom' && db[type]) {
+                    const mat = db[type];
+                    document.getElementById('cohesion').value = mat.cohesion;
+                    document.getElementById('unitWeight').value = mat.weight;
+                    document.getElementById('frictionAngle').value = mat.friction;
+                    document.getElementById('frictionAngleValue').textContent = mat.friction + '°';
+                    // Approximate: use MC friction as phi0, modest deltaPhi
+                    document.getElementById('lepsPhi0').value = Math.min(mat.friction + 10, 60);
+                    document.getElementById('lepsPhi0Value').textContent = Math.min(mat.friction + 10, 60) + '°';
+                    document.getElementById('lepsDeltaPhi').value = 8;
+                    document.getElementById('lepsDeltaPhiValue').textContent = '8°';
+                    updateLepsPreview();
+                }
+                return;
+            }
+            
+            // Standard Mohr-Coulomb presets
             const db = (unitSystem === 'metric' && materialDatabaseMetric[type]) ? materialDatabaseMetric : materialDatabase;
             if (type !== 'custom' && db[type]) {
                 const mat = db[type];
@@ -2511,6 +2638,87 @@
                 document.getElementById('frictionAngle').value = mat.friction;
                 document.getElementById('frictionAngleValue').textContent = mat.friction + '°';
                 document.getElementById('unitWeight').value = mat.weight;
+            }
+        }
+
+        function updateStrengthModel() {
+            const model = document.getElementById('strengthModel').value;
+            const mcGroup = document.getElementById('mcFrictionGroup');
+            const lepsGroup = document.getElementById('lepsParams');
+            
+            if (model === 'leps') {
+                mcGroup.style.display = 'none';
+                lepsGroup.style.display = 'block';
+                updateLepsPreview();
+                // Auto-suggest Leps if material is waste rock or heap leach
+                const type = document.getElementById('materialType').value;
+                if (lepsPresets[type]) {
+                    updateMaterialProperties();
+                }
+            } else {
+                mcGroup.style.display = 'block';
+                lepsGroup.style.display = 'none';
+            }
+            
+            // Update header method label
+            const headerLabel = document.getElementById('headerMethodLabel');
+            if (headerLabel) {
+                headerLabel.textContent = model === 'leps' 
+                    ? 'Modified Bishop + Leps •' 
+                    : "Modified Bishop's Method •";
+            }
+            
+            // Update equation display
+            updateEquationDisplay();
+        }
+
+        function updateLepsPreview() {
+            const phi0 = parseFloat(document.getElementById('lepsPhi0').value) || 50;
+            const deltaPhi = parseFloat(document.getElementById('lepsDeltaPhi').value) || 10;
+            const pa = 2116; // psf (atmospheric pressure)
+            
+            // Show preview at a few representative normal stresses
+            const stresses = [1, 5, 10, 20]; // multiples of pa
+            const parts = stresses.map(mult => {
+                const sigma = mult * pa;
+                const phiEff = phi0 - deltaPhi * Math.log10(sigma / pa);
+                const sigDisplay = unitSystem === 'metric' 
+                    ? (sigma * 0.04788).toFixed(0) + ' kPa'
+                    : (sigma / 1000).toFixed(0) + 'k psf';
+                return `σn=${sigDisplay} → φ=${phiEff.toFixed(1)}°`;
+            });
+            
+            const preview = document.getElementById('lepsPreview');
+            if (preview) {
+                preview.textContent = parts.join(' | ');
+            }
+            
+            // Update pa display
+            const paDisp = document.getElementById('lepsPaDisplay');
+            if (paDisp) {
+                paDisp.textContent = unitSystem === 'metric' ? '101.3 kPa' : '2,116 psf';
+            }
+        }
+
+        function updateEquationDisplay() {
+            const model = document.getElementById('strengthModel').value;
+            const eqEl = document.getElementById('bishopEquation');
+            const maEl = document.getElementById('bishopMalpha');
+            if (!eqEl) return;
+            
+            if (model === 'leps') {
+                eqEl.innerHTML = `
+                    FoS = Σ [ (c'·b + (W - u·b)·tan φ(σn)) / m<sub>α</sub> ] / Σ [ W·sin α ]
+                    <br><span style="color: var(--accent-blue); font-size: 0.75rem;">
+                    φ(σn) = φ₀ − Δφ · log₁₀(σn / pₐ) &nbsp;|&nbsp; Leps (1970)
+                    </span>
+                `;
+                if (maEl) maEl.innerHTML = `m<sub>α</sub> = cos α + (sin α · tan φ(σn)) / FoS`;
+            } else {
+                eqEl.innerHTML = `
+                    FoS = Σ [ (c'·b + (W - u·b)·tan φ') / m<sub>α</sub> ] / Σ [ W·sin α ]
+                `;
+                if (maEl) maEl.innerHTML = `m<sub>α</sub> = cos α + (sin α · tan φ') / FoS`;
             }
         }
 
@@ -3264,7 +3472,10 @@
                 inputs: {
                     H, poreParams, numSlices,
                     advancedMode, segments: [...segments],
-                    limits: limits
+                    limits: limits,
+                    strengthModel: document.getElementById('strengthModel').value,
+                    lepsPhi0: parseFloat(document.getElementById('lepsPhi0').value) || 50,
+                    lepsDeltaPhi: parseFloat(document.getElementById('lepsDeltaPhi').value) || 10
                 }
             };
             
@@ -3389,11 +3600,24 @@
                 const c = parseFloat(document.getElementById('cohesion').value);
                 const phi = parseFloat(document.getElementById('frictionAngle').value);
                 const gamma = parseFloat(document.getElementById('unitWeight').value);
-                inputHtml = `
-                    <div class="equation-term"><span class="symbol">c'</span> <span class="value">${c} ${uPres}</span></div>
-                    <div class="equation-term"><span class="symbol">φ'</span> <span class="value">${phi}°</span></div>
-                    <div class="equation-term"><span class="symbol">γ</span> <span class="value">${gamma} ${uWt}</span></div>
-                `;
+                const strengthModel = document.getElementById('strengthModel').value;
+                
+                if (strengthModel === 'leps') {
+                    const phi0 = parseFloat(document.getElementById('lepsPhi0').value);
+                    const dPhi = parseFloat(document.getElementById('lepsDeltaPhi').value);
+                    inputHtml = `
+                        <div class="equation-term"><span class="symbol">c'</span> <span class="value">${c} ${uPres}</span></div>
+                        <div class="equation-term"><span class="symbol">φ₀</span> <span class="value">${phi0}°</span></div>
+                        <div class="equation-term"><span class="symbol">Δφ</span> <span class="value">${dPhi}°/log cycle</span></div>
+                        <div class="equation-term"><span class="symbol">γ</span> <span class="value">${gamma} ${uWt}</span></div>
+                    `;
+                } else {
+                    inputHtml = `
+                        <div class="equation-term"><span class="symbol">c'</span> <span class="value">${c} ${uPres}</span></div>
+                        <div class="equation-term"><span class="symbol">φ'</span> <span class="value">${phi}°</span></div>
+                        <div class="equation-term"><span class="symbol">γ</span> <span class="value">${gamma} ${uWt}</span></div>
+                    `;
+                }
             }
             document.getElementById('inputSummary').innerHTML = inputHtml;
             
@@ -4267,6 +4491,28 @@
                     document.getElementById('frictionAngleValue').textContent = v + '°';
                 }
             },
+            lepsPhi0: {
+                label: "Leps φ₀ — Friction at 1 atm (°)",
+                unit: '°',
+                defaultMin: 35,
+                defaultMax: 60,
+                getValue: () => parseFloat(document.getElementById('lepsPhi0').value),
+                setValue: (v) => {
+                    document.getElementById('lepsPhi0').value = v;
+                    document.getElementById('lepsPhi0Value').textContent = Math.round(v) + '°';
+                }
+            },
+            lepsDeltaPhi: {
+                label: "Leps Δφ — Reduction per log cycle (°)",
+                unit: '°',
+                defaultMin: 3,
+                defaultMax: 20,
+                getValue: () => parseFloat(document.getElementById('lepsDeltaPhi').value),
+                setValue: (v) => {
+                    document.getElementById('lepsDeltaPhi').value = v;
+                    document.getElementById('lepsDeltaPhiValue').textContent = Math.round(v) + '°';
+                }
+            },
             unitWeight: { 
                 get label() { return unitSystem === 'metric' ? "Unit Weight, γ (kN/m³)" : "Unit Weight, γ (pcf)"; },
                 get unit() { return getUnit('unitWeight'); },
@@ -4717,9 +4963,12 @@
                 
                 // Material (simple mode)
                 materialType: document.getElementById('materialType').value,
+                strengthModel: document.getElementById('strengthModel').value,
                 cohesion: document.getElementById('cohesion').value,
                 frictionAngle: document.getElementById('frictionAngle').value,
                 unitWeight: document.getElementById('unitWeight').value,
+                lepsPhi0: document.getElementById('lepsPhi0').value,
+                lepsDeltaPhi: document.getElementById('lepsDeltaPhi').value,
                 
                 // Hydrogeology
                 porePressureModel: document.getElementById('porePressureModel').value,
@@ -4858,6 +5107,21 @@
                 document.getElementById('frictionAngleValue').textContent = params.frictionAngle + '°';
             }
             if (params.unitWeight) document.getElementById('unitWeight').value = params.unitWeight;
+            
+            // Apply strength model and Leps parameters
+            if (params.strengthModel) {
+                document.getElementById('strengthModel').value = params.strengthModel;
+                updateStrengthModel();
+            }
+            if (params.lepsPhi0) {
+                document.getElementById('lepsPhi0').value = params.lepsPhi0;
+                document.getElementById('lepsPhi0Value').textContent = params.lepsPhi0 + '°';
+            }
+            if (params.lepsDeltaPhi) {
+                document.getElementById('lepsDeltaPhi').value = params.lepsDeltaPhi;
+                document.getElementById('lepsDeltaPhiValue').textContent = params.lepsDeltaPhi + '°';
+            }
+            if (params.strengthModel === 'leps') updateLepsPreview();
             
             // Apply hydrogeology
             if (params.porePressureModel) {
@@ -5234,7 +5498,7 @@
         </div>
         <div class="report-title">
             <h1>Slope Stability Analysis</h1>
-            <div class="subtitle">Modified Bishop's Simplified Method • ${unitSystem === 'metric' ? 'SI/Metric Units' : 'Imperial Units'}</div>
+            <div class="subtitle">Modified Bishop's Simplified Method${params.strengthModel === 'leps' ? ' • Leps (1970) Nonlinear Strength' : ''} • ${unitSystem === 'metric' ? 'SI/Metric Units' : 'Imperial Units'}</div>
             <div class="date">Generated: ${new Date().toLocaleString()}</div>
         </div>
     </div>
@@ -5264,8 +5528,14 @@
             <div class="section">
                 <div class="section-header">🪨 Material Properties</div>
                 <table class="param-table">
+                    <tr><td>Strength Model</td><td>${params.strengthModel === 'leps' ? 'Leps (Nonlinear)' : 'Mohr-Coulomb'}</td></tr>
                     <tr><td>Cohesion (c')</td><td>${params.cohesion} ${getUnit('pressure')}</td></tr>
+                    ${params.strengthModel === 'leps' ? `
+                    <tr><td>φ₀ (Friction at 1 atm)</td><td>${params.lepsPhi0}°</td></tr>
+                    <tr><td>Δφ (Reduction/log cycle)</td><td>${params.lepsDeltaPhi}°</td></tr>
+                    ` : `
                     <tr><td>Friction Angle (φ')</td><td>${params.frictionAngle}°</td></tr>
+                    `}
                     <tr><td>Unit Weight (γ)</td><td>${params.unitWeight} ${getUnit('unitWeight')}</td></tr>
                 </table>
             </div>
