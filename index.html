@@ -1346,9 +1346,52 @@
                 </button>
             </div>
 
+            <!-- STRENGTH MODEL - Always visible in both simple and advanced modes -->
+            <div class="section-header">🪨 Material Properties</div>
+
+            <div class="strength-model-row">
+                <div class="input-group" style="margin-bottom: 0;">
+                    <label class="input-label">Strength Model</label>
+                    <select id="strengthModel" onchange="updateStrengthModel()">
+                        <option value="mohr_coulomb">Mohr-Coulomb</option>
+                        <option value="leps">Leps (Nonlinear)</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Leps Nonlinear Strength Parameters (hidden by default, visible in both modes) -->
+            <div id="lepsParams" style="display: none;">
+                <div class="input-row">
+                    <div class="input-group">
+                        <label class="input-label">
+                            φ₀ — Friction at 1 atm (degrees)
+                            <span class="range-value" id="lepsPhi0Value">50°</span>
+                        </label>
+                        <input type="range" id="lepsPhi0" value="50" min="30" max="60" step="1"
+                            oninput="document.getElementById('lepsPhi0Value').textContent = this.value + '°'">
+                    </div>
+                    <div class="input-group">
+                        <label class="input-label">
+                            Δφ — Reduction per log cycle (degrees)
+                            <span class="range-value" id="lepsDeltaPhiValue">10°</span>
+                        </label>
+                        <input type="range" id="lepsDeltaPhi" value="10" min="3" max="20" step="1"
+                            oninput="document.getElementById('lepsDeltaPhiValue').textContent = this.value + '°'">
+                    </div>
+                </div>
+                <div class="leps-info">
+                    <div class="leps-equation">φ(σn) = φ₀ − Δφ · log₁₀(σn / pₐ)</div>
+                    Leps (1970) nonlinear envelope for rockfill and waste rock. Friction angle decreases with increasing normal stress.
+                    pₐ = atmospheric pressure (<span id="lepsPaDisplay">2,116 psf</span>).
+                    <span id="lepsAdvancedNote" style="display:none; margin-top:0.3rem; color: var(--accent-warning);">
+                        In multi-bench mode, each segment's φ' serves as φ₀ for that segment.
+                    </span>
+                    <span id="lepsPreview" style="display:block; margin-top:0.3rem; color: var(--accent-blue);"></span>
+                </div>
+            </div>
+
             <!-- SIMPLE MATERIAL PARAMETERS (shown when not using advanced) -->
             <div id="simpleMaterial">
-                <div class="section-header">🪨 Material Properties</div>
 
                 <div class="input-group">
                     <label class="input-label">Material Preset</label>
@@ -1373,16 +1416,6 @@
                     </select>
                 </div>
 
-                <div class="strength-model-row">
-                    <div class="input-group" style="margin-bottom: 0;">
-                        <label class="input-label">Strength Model</label>
-                        <select id="strengthModel" onchange="updateStrengthModel()">
-                            <option value="mohr_coulomb">Mohr-Coulomb</option>
-                            <option value="leps">Leps (Nonlinear)</option>
-                        </select>
-                    </div>
-                </div>
-
                 <div class="input-row">
                     <div class="input-group">
                         <label class="input-label">Cohesion, c' (psf)</label>
@@ -1400,34 +1433,6 @@
                         <span class="range-value" id="frictionAngleValue">30°</span>
                     </label>
                     <input type="range" id="frictionAngle" value="30" min="0" max="50" step="1">
-                </div>
-
-                <!-- Leps Nonlinear Strength Parameters (hidden by default) -->
-                <div id="lepsParams" style="display: none;">
-                    <div class="input-row">
-                        <div class="input-group">
-                            <label class="input-label">
-                                φ₀ — Friction at 1 atm (degrees)
-                                <span class="range-value" id="lepsPhi0Value">50°</span>
-                            </label>
-                            <input type="range" id="lepsPhi0" value="50" min="30" max="60" step="1"
-                                oninput="document.getElementById('lepsPhi0Value').textContent = this.value + '°'">
-                        </div>
-                        <div class="input-group">
-                            <label class="input-label">
-                                Δφ — Reduction per log cycle (degrees)
-                                <span class="range-value" id="lepsDeltaPhiValue">10°</span>
-                            </label>
-                            <input type="range" id="lepsDeltaPhi" value="10" min="3" max="20" step="1"
-                                oninput="document.getElementById('lepsDeltaPhiValue').textContent = this.value + '°'">
-                        </div>
-                    </div>
-                    <div class="leps-info">
-                        <div class="leps-equation">φ(σn) = φ₀ − Δφ · log₁₀(σn / pₐ)</div>
-                        Leps (1970) nonlinear envelope for rockfill and waste rock. Friction angle decreases with increasing normal stress.
-                        pₐ = atmospheric pressure (<span id="lepsPaDisplay">2,116 psf</span>).
-                        <span id="lepsPreview" style="display:block; margin-top:0.3rem; color: var(--accent-blue);"></span>
-                    </div>
                 </div>
             </div>
 
@@ -1673,7 +1678,7 @@
                 <!-- Primary Result: FoS -->
                 <div class="result-primary">
                     <div class="result-card fos-card">
-                        <div class="result-label">Factor of Safety</div>
+                        <div class="result-label" id="fosMethodLabel">Factor of Safety</div>
                         <div class="result-value" id="minFos">--</div>
                         <div class="result-sublabel" id="fosStatus">--</div>
                     </div>
@@ -2650,15 +2655,24 @@
                 mcGroup.style.display = 'none';
                 lepsGroup.style.display = 'block';
                 updateLepsPreview();
-                // Auto-suggest Leps if material is waste rock or heap leach
-                const type = document.getElementById('materialType').value;
-                if (lepsPresets[type]) {
-                    updateMaterialProperties();
+                // Auto-suggest Leps if material is waste rock or heap leach (simple mode)
+                if (!advancedMode) {
+                    const type = document.getElementById('materialType').value;
+                    if (lepsPresets[type]) {
+                        updateMaterialProperties();
+                    }
                 }
             } else {
-                mcGroup.style.display = 'block';
+                mcGroup.style.display = advancedMode ? 'none' : 'block';
                 lepsGroup.style.display = 'none';
             }
+            
+            // Show/hide Leps advanced note
+            const lepsAdvNote = document.getElementById('lepsAdvancedNote');
+            if (lepsAdvNote) lepsAdvNote.style.display = (model === 'leps' && advancedMode) ? 'block' : 'none';
+            
+            // Re-render segments to update φ' / φ₀ labels
+            if (advancedMode) renderSegments();
             
             // Update header method label
             const headerLabel = document.getElementById('headerMethodLabel');
@@ -2667,6 +2681,9 @@
                     ? 'Modified Bishop + Leps •' 
                     : "Modified Bishop's Method •";
             }
+            
+            // Update FoS result label
+            updateFosMethodLabel();
             
             // Update equation display
             updateEquationDisplay();
@@ -2722,6 +2739,15 @@
             }
         }
 
+        function updateFosMethodLabel() {
+            const label = document.getElementById('fosMethodLabel');
+            if (!label) return;
+            const model = document.getElementById('strengthModel').value;
+            label.textContent = model === 'leps' 
+                ? 'Factor of Safety — Leps Nonlinear Strength' 
+                : 'Factor of Safety';
+        }
+
         function toggleAdvanced() {
             advancedMode = !advancedMode;
             const toggle = document.getElementById('advancedToggle');
@@ -2734,9 +2760,16 @@
             simpleGeom.style.display = advancedMode ? 'none' : 'block';
             simpleMat.style.display = advancedMode ? 'none' : 'block';
             
+            // Show/hide Leps advanced note
+            const lepsAdvNote = document.getElementById('lepsAdvancedNote');
+            const isLeps = document.getElementById('strengthModel').value === 'leps';
+            if (lepsAdvNote) lepsAdvNote.style.display = (advancedMode && isLeps) ? 'block' : 'none';
+            
             if (advancedMode && segments.length === 0) {
                 addSegment();
             }
+            // Re-render segments to update φ' / φ₀ labels
+            if (advancedMode) renderSegments();
             updateHeightIndicator();
         }
 
@@ -2899,8 +2932,8 @@
                                    onchange="updateSegment(${seg.id}, 'cohesion', this.value)">
                         </div>
                         <div class="input-group">
-                            <label class="input-label">φ' (°)</label>
-                            <input type="number" value="${seg.frictionAngle}" min="0" max="50" step="1"
+                            <label class="input-label">${document.getElementById('strengthModel').value === 'leps' ? 'φ₀' : "φ'"} (°)</label>
+                            <input type="number" value="${seg.frictionAngle}" min="0" max="60" step="1"
                                    onchange="updateSegment(${seg.id}, 'frictionAngle', this.value)">
                         </div>
                         <div class="input-group">
@@ -3487,6 +3520,7 @@
 
         function showResults(results) {
             document.getElementById('resultsPanel').style.display = 'block';
+            updateFosMethodLabel();
             const c = results[0];
             
             // Primary FoS display
