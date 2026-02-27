@@ -790,6 +790,9 @@
 
         .summary-calc .final-equation { font-size: 1rem; color: var(--text-primary); margin-bottom: 0.5rem; }
         .summary-calc .final-result { font-size: 1.8rem; font-weight: 800; font-family: 'JetBrains Mono', monospace; }
+        .summary-calc .final-result.safe { color: var(--accent-safe); }
+        .summary-calc .final-result.warning { color: var(--accent-warning); }
+        .summary-calc .final-result.danger { color: var(--accent-danger); }
 
         .toggle-details {
             background: var(--bg-tertiary);
@@ -3924,14 +3927,19 @@
             const { critical, inputs } = lastAnalysisResult;
             const uPres = getUnit('pressure');
             const uWt = getUnit('unitWeight');
-            const isSpencer = critical.method === 'spencer';
+            const selectedMethod = document.getElementById('analysisMethod').value;
+            const isSpencer = selectedMethod === 'spencer';
             
             // Update panel header
             const panelHeader = document.getElementById('calcPanelHeader');
             if (panelHeader) {
-                panelHeader.textContent = isSpencer 
-                    ? "Spencer's Method (Rigorous) - Calculation Details"
-                    : "Modified Bishop's Method - Calculation Details";
+                let headerText = isSpencer 
+                    ? "Spencer's Method (Rigorous)" 
+                    : "Modified Bishop's Method";
+                if (isSpencer && critical.method === 'bishop') {
+                    headerText += " (Bishop fallback — Spencer did not converge)";
+                }
+                panelHeader.textContent = headerText + " - Calculation Details";
             }
             
             // Build input summary
@@ -4003,13 +4011,20 @@
                 <div class="final-equation">FoS = ${totR.toFixed(0)} / ${totD.toFixed(0)}</div>
                 <div class="final-result ${cls}">${critical.fos.toFixed(4)}</div>
             `;
-            if (isSpencer && critical.thetaDeg !== undefined) {
-                summaryHtml += `
-                    <div style="text-align:center; margin-top:0.5rem; font-size:0.8rem; color: var(--accent-blue);">
-                        Spencer θ = ${critical.thetaDeg.toFixed(2)}° | 
-                        ${critical.converged ? '✓ Converged' : '⚠ Used Bishop fallback'}
-                    </div>
-                `;
+            if (isSpencer) {
+                if (critical.method === 'spencer' && critical.thetaDeg !== undefined) {
+                    summaryHtml += `
+                        <div style="text-align:center; margin-top:0.5rem; font-size:0.8rem; color: var(--accent-blue);">
+                            Spencer θ = ${critical.thetaDeg.toFixed(2)}° | ✓ Converged
+                        </div>
+                    `;
+                } else {
+                    summaryHtml += `
+                        <div style="text-align:center; margin-top:0.5rem; font-size:0.8rem; color: var(--accent-warning);">
+                            ⚠ Spencer did not converge — Bishop result used
+                        </div>
+                    `;
+                }
             }
             document.getElementById('summaryCalc').innerHTML = summaryHtml;
         }
