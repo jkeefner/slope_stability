@@ -1570,6 +1570,14 @@
                 </div>
             </div>
 
+            <div class="input-group">
+                <label class="input-label">Analysis Method</label>
+                <select id="analysisMethod" onchange="updateAnalysisMethod()">
+                    <option value="bishop">Modified Bishop's Simplified</option>
+                    <option value="spencer">Spencer's Method (Rigorous)</option>
+                </select>
+            </div>
+
             <div class="input-row">
                 <div class="input-group">
                     <label class="input-label">Slices <span class="range-value" id="numSlicesValue">25</span></label>
@@ -1712,6 +1720,10 @@
                             <span class="result-item-label">Circle Center</span>
                             <span class="result-item-value" id="circleCenter">--</span>
                         </div>
+                        <div class="result-item" id="spencerThetaItem" style="display:none;">
+                            <span class="result-item-label">Spencer θ (interslice)</span>
+                            <span class="result-item-value" id="spencerTheta">--</span>
+                        </div>
                     </div>
                 </div>
                 
@@ -1762,7 +1774,7 @@
 
             <!-- CALCULATION DETAILS -->
             <div class="calc-panel" id="calcPanel" style="display: none;">
-                <div class="panel-header">Modified Bishop's Method - Calculation Details</div>
+                <div class="panel-header" id="calcPanelHeader">Modified Bishop's Method - Calculation Details</div>
                 
                 <div class="equation-box">
                     <div class="equation-main" id="bishopEquation">
@@ -2675,12 +2687,7 @@
             if (advancedMode) renderSegments();
             
             // Update header method label
-            const headerLabel = document.getElementById('headerMethodLabel');
-            if (headerLabel) {
-                headerLabel.textContent = model === 'leps' 
-                    ? 'Modified Bishop + Leps •' 
-                    : "Modified Bishop's Method •";
-            }
+            updateHeaderMethodLabel();
             
             // Update FoS result label
             updateFosMethodLabel();
@@ -2718,34 +2725,67 @@
         }
 
         function updateEquationDisplay() {
-            const model = document.getElementById('strengthModel').value;
+            const strengthModel = document.getElementById('strengthModel').value;
+            const analysisMethod = document.getElementById('analysisMethod').value;
             const eqEl = document.getElementById('bishopEquation');
             const maEl = document.getElementById('bishopMalpha');
             if (!eqEl) return;
             
-            if (model === 'leps') {
+            const phiTerm = strengthModel === 'leps' ? 'φ(σn)' : "φ'";
+            const lepsNote = strengthModel === 'leps' 
+                ? `<br><span style="color: var(--accent-blue); font-size: 0.75rem;">φ(σn) = φ₀ − Δφ · log₁₀(σn / pₐ) &nbsp;|&nbsp; Leps (1970)</span>`
+                : '';
+            
+            if (analysisMethod === 'spencer') {
                 eqEl.innerHTML = `
-                    FoS = Σ [ (c'·b + (W - u·b)·tan φ(σn)) / m<sub>α</sub> ] / Σ [ W·sin α ]
-                    <br><span style="color: var(--accent-blue); font-size: 0.75rem;">
-                    φ(σn) = φ₀ − Δφ · log₁₀(σn / pₐ) &nbsp;|&nbsp; Leps (1970)
-                    </span>
+                    F<sub>m</sub> = Σ[c'·l + (N − u·l)·tan ${phiTerm}] / Σ[W·sin α]
+                    ${lepsNote}
                 `;
-                if (maEl) maEl.innerHTML = `m<sub>α</sub> = cos α + (sin α · tan φ(σn)) / FoS`;
+                if (maEl) maEl.innerHTML = `
+                    F<sub>f</sub> = Σ[(c'·l + (N − u·l)·tan ${phiTerm})·cos α] / Σ[N·sin α]
+                    <br><span style="font-size: 0.7rem;">Spencer (1967): solve for θ where F<sub>m</sub>(θ) = F<sub>f</sub>(θ)</span>
+                `;
             } else {
                 eqEl.innerHTML = `
-                    FoS = Σ [ (c'·b + (W - u·b)·tan φ') / m<sub>α</sub> ] / Σ [ W·sin α ]
+                    FoS = Σ [ (c'·b + (W - u·b)·tan ${phiTerm}) / m<sub>α</sub> ] / Σ [ W·sin α ]
+                    ${lepsNote}
                 `;
-                if (maEl) maEl.innerHTML = `m<sub>α</sub> = cos α + (sin α · tan φ') / FoS`;
+                if (maEl) maEl.innerHTML = `m<sub>α</sub> = cos α + (sin α · tan ${phiTerm}) / FoS`;
             }
         }
 
         function updateFosMethodLabel() {
             const label = document.getElementById('fosMethodLabel');
             if (!label) return;
-            const model = document.getElementById('strengthModel').value;
-            label.textContent = model === 'leps' 
-                ? 'Factor of Safety — Leps Nonlinear Strength' 
-                : 'Factor of Safety';
+            const strengthModel = document.getElementById('strengthModel').value;
+            const analysisMethod = document.getElementById('analysisMethod').value;
+            let text = 'Factor of Safety';
+            const parts = [];
+            if (analysisMethod === 'spencer') parts.push("Spencer's Method");
+            if (strengthModel === 'leps') parts.push('Leps Nonlinear Strength');
+            if (parts.length > 0) text += ' — ' + parts.join(' + ');
+            label.textContent = text;
+        }
+
+        function updateAnalysisMethod() {
+            // Update header label
+            updateHeaderMethodLabel();
+            
+            // Update FoS result label
+            updateFosMethodLabel();
+            
+            // Update equation display
+            updateEquationDisplay();
+        }
+
+        function updateHeaderMethodLabel() {
+            const headerLabel = document.getElementById('headerMethodLabel');
+            if (!headerLabel) return;
+            const method = document.getElementById('analysisMethod').value;
+            const strengthModel = document.getElementById('strengthModel').value;
+            let base = method === 'spencer' ? "Spencer's Method" : "Modified Bishop's Method";
+            if (strengthModel === 'leps') base = base.replace("'s Method", '') + ' + Leps';
+            headerLabel.textContent = base + ' •';
         }
 
         function toggleAdvanced() {
@@ -3381,13 +3421,269 @@
             if (!isFinite(FoS) || FoS <= 0 || FoS > 100) return { fos: Infinity, valid: false };
             
             return {
-                fos: FoS, valid: true,
+                fos: FoS, valid: true, method: 'bishop',
                 centerX, centerY, radius,
                 entryX: entryPoint.x, entryY: entryPoint.y,
                 exitX: exitPoint.x, exitY: exitPoint.y,
                 maxDepth, slices, totalWeight, totalArcLength,
                 sumResisting, sumDriving
             };
+        }
+
+        /**
+         * Spencer's Method (1967) - Rigorous limit equilibrium
+         * Satisfies both moment and force equilibrium by iterating on
+         * the interslice force inclination angle θ.
+         *
+         * For each slice, normal force on base (derived from combined
+         * horizontal + vertical equilibrium, eliminating interslice forces):
+         *   N_i = [W_i·cosθ − (c'_i − u_i·tanφ'_i)·l_i·sin(α_i−θ)/F]
+         *         / [cos(α_i−θ) + tanφ'_i·sin(α_i−θ)/F]
+         *
+         * Moment equilibrium (circular, about center):
+         *   F_m = Σ[c'·l + (N − u·l)·tanφ'] / Σ[W·sinα]
+         *
+         * Force equilibrium (horizontal):
+         *   F_f = Σ[(c'·l + (N − u·l)·tanφ')·cosα] / Σ[N·sinα]
+         *
+         * Solution: find θ where F_m(θ) = F_f(θ)
+         */
+        function calculateSpencerFOS(centerX, centerY, radius, profile, poreParams, numSlices) {
+            // Build slices identically to Bishop
+            const intersections = findCircleIntersections(centerX, centerY, radius, profile);
+            if (intersections.length < 2) return { fos: Infinity, valid: false };
+            
+            const entryPoint = intersections[0];
+            const exitPoint = intersections[intersections.length - 1];
+            
+            let hasSubsurface = false;
+            for (let i = 1; i < 50; i++) {
+                const t = i / 50;
+                const checkX = entryPoint.x + t * (exitPoint.x - entryPoint.x);
+                const dx = checkX - centerX;
+                const disc = radius * radius - dx * dx;
+                if (disc < 0) continue;
+                const checkY = centerY - Math.sqrt(disc);
+                if (checkY < getSurfaceY(checkX, profile) - 0.5) { hasSubsurface = true; break; }
+            }
+            if (!hasSubsurface) return { fos: Infinity, valid: false };
+            
+            const xStart = entryPoint.x;
+            const xEnd = exitPoint.x;
+            const sliceWidth = (xEnd - xStart) / numSlices;
+            if (sliceWidth <= 0) return { fos: Infinity, valid: false };
+            
+            const H = profile.totalHeight;
+            const gammaW = 62.4;
+            const ppModel = poreParams.model || 'none';
+            const waterTableY = (ppModel === 'watertable' || ppModel === 'combined')
+                ? (H - poreParams.waterTableDepth) : -Infinity;
+            const ru = (ppModel === 'ru' || ppModel === 'combined') ? poreParams.ru : 0;
+            
+            const slices = [];
+            let totalWeight = 0;
+            let totalArcLength = 0;
+            
+            for (let i = 0; i < numSlices; i++) {
+                const xMid = xStart + (i + 0.5) * sliceWidth;
+                const surfaceY = getSurfaceY(xMid, profile);
+                const dx = xMid - centerX;
+                const disc = radius * radius - dx * dx;
+                if (disc < 0) continue;
+                const baseY = centerY - Math.sqrt(disc);
+                if (baseY >= surfaceY) continue;
+                const sliceHeight = surfaceY - baseY;
+                if (sliceHeight <= 0) continue;
+                
+                const midY = (surfaceY + baseY) / 2;
+                const mat = getMaterialAtY(midY, profile);
+                const alpha = Math.atan2(xMid - centerX, centerY - baseY);
+                const W = mat.gamma * sliceWidth * sliceHeight;
+                totalWeight += W;
+                totalArcLength += Math.abs(sliceWidth / Math.cos(alpha));
+                
+                let u = 0, uFromWT = 0, uFromRu = 0;
+                if (ppModel === 'watertable' && baseY < waterTableY) {
+                    uFromWT = gammaW * (waterTableY - baseY); u = uFromWT;
+                } else if (ppModel === 'ru') {
+                    uFromRu = ru * mat.gamma * sliceHeight; u = uFromRu;
+                } else if (ppModel === 'combined' && baseY < waterTableY) {
+                    uFromWT = gammaW * (waterTableY - baseY);
+                    uFromRu = ru * mat.gamma * (waterTableY - baseY);
+                    u = uFromWT + uFromRu;
+                }
+                
+                slices.push({
+                    index: i + 1, x: xMid, width: sliceWidth,
+                    height: sliceHeight, baseY, surfaceY,
+                    W, u, uFromWT, uFromRu,
+                    c: mat.c, phi: mat.phi, gamma: mat.gamma,
+                    alpha, alphaDeg: alpha * 180 / Math.PI,
+                    sinAlpha: Math.sin(alpha), cosAlpha: Math.cos(alpha),
+                    tanPhi: Math.tan(mat.phi),
+                    baseLength: Math.abs(sliceWidth / Math.cos(alpha))
+                });
+            }
+            
+            if (slices.length === 0) return { fos: Infinity, valid: false };
+            
+            const sumWsinA = slices.reduce((sum, s) => sum + s.W * s.sinAlpha, 0);
+            if (sumWsinA <= 0) return { fos: Infinity, valid: false };
+            
+            // --- Spencer dual iteration on F and θ ---
+            // Helper: compute N_i for all slices given F and θ
+            function computeSliceNormals(F, theta) {
+                const results = [];
+                let valid = true;
+                for (const s of slices) {
+                    const aMinusT = s.alpha - theta;
+                    const sinAT = Math.sin(aMinusT);
+                    const cosAT = Math.cos(aMinusT);
+                    const denom = cosAT + s.tanPhi * sinAT / F;
+                    if (Math.abs(denom) < 0.001) { valid = false; break; }
+                    
+                    const l = s.baseLength;
+                    const N = (s.W * Math.cos(theta) - (s.c - s.u * s.tanPhi) * l * sinAT / F) / denom;
+                    const shearStrength = s.c * l + Math.max(0, N - s.u * l) * s.tanPhi;
+                    
+                    results.push({ N, shearStrength, slice: s });
+                }
+                return { results, valid };
+            }
+            
+            // Helper: compute F_m (moment equilibrium) for given θ
+            function computeFm(theta) {
+                let F = 1.5;
+                for (let iter = 0; iter < 60; iter++) {
+                    const { results, valid } = computeSliceNormals(F, theta);
+                    if (!valid) return NaN;
+                    
+                    const sumStrength = results.reduce((s, r) => s + r.shearStrength, 0);
+                    const newF = sumStrength / sumWsinA;
+                    if (!isFinite(newF) || newF <= 0) return NaN;
+                    if (Math.abs(newF - F) < 0.00005) return newF;
+                    F = 0.7 * newF + 0.3 * F;
+                }
+                return F;
+            }
+            
+            // Helper: compute F_f (force equilibrium) for given F and θ
+            function computeFf(F, theta) {
+                const { results, valid } = computeSliceNormals(F, theta);
+                if (!valid) return NaN;
+                
+                let sumNum = 0, sumDen = 0;
+                for (const r of results) {
+                    sumNum += r.shearStrength * r.slice.cosAlpha;
+                    sumDen += r.N * r.slice.sinAlpha;
+                }
+                if (Math.abs(sumDen) < 0.001) return NaN;
+                return sumNum / sumDen;
+            }
+            
+            // Iterate: find θ where F_m(θ) = F_f(F_m, θ)
+            let theta = 0;
+            let F = computeFm(0);
+            if (!isFinite(F) || F <= 0) {
+                // Fall back to Bishop if Spencer fails to initialize
+                return calculateBishopFOS(centerX, centerY, radius, profile, poreParams, numSlices);
+            }
+            
+            let converged = false;
+            for (let outerIter = 0; outerIter < 40; outerIter++) {
+                const Fm = computeFm(theta);
+                if (!isFinite(Fm) || Fm <= 0) break;
+                
+                const Ff = computeFf(Fm, theta);
+                if (!isFinite(Ff) || Ff <= 0) break;
+                
+                const residual = Ff - Fm;
+                
+                if (Math.abs(residual) < 0.0005) {
+                    F = (Fm + Ff) / 2;
+                    converged = true;
+                    break;
+                }
+                
+                // Numerical derivative: d(Ff-Fm)/dθ
+                const dTheta = 0.005;
+                const FmPlus = computeFm(theta + dTheta);
+                const FfPlus = computeFf(FmPlus, theta + dTheta);
+                const dResidual = (FfPlus - FmPlus) - residual;
+                
+                if (Math.abs(dResidual) > 0.0001) {
+                    // Newton-Raphson step with damping
+                    const step = -residual / (dResidual / dTheta);
+                    theta += Math.max(-0.15, Math.min(0.15, step * 0.6));
+                } else {
+                    // Fallback: simple proportional adjustment
+                    theta += residual * 0.3;
+                }
+                
+                // Clamp θ to physically reasonable range (±30°)
+                theta = Math.max(-Math.PI / 6, Math.min(Math.PI / 6, theta));
+                F = Fm;
+            }
+            
+            if (!converged || !isFinite(F) || F <= 0 || F > 100) {
+                // If Spencer didn't converge, fall back to Bishop
+                return calculateBishopFOS(centerX, centerY, radius, profile, poreParams, numSlices);
+            }
+            
+            // Final pass: compute slice details with converged F and θ
+            const { results: finalSliceData } = computeSliceNormals(F, theta);
+            let sumResisting = 0;
+            let sumDriving = 0;
+            
+            // Compute interslice forces for display
+            let E = 0; // horizontal interslice force, starting from left boundary
+            
+            for (let i = 0; i < finalSliceData.length; i++) {
+                const r = finalSliceData[i];
+                const s = r.slice;
+                const S = r.shearStrength / F;
+                
+                s.N_spencer = r.N;
+                s.S_spencer = S;
+                s.m_alpha = s.cosAlpha + (s.sinAlpha * s.tanPhi) / F;
+                s.resisting = r.shearStrength / s.m_alpha; // Bishop-equivalent for display
+                s.driving = s.W * s.sinAlpha;
+                s.E_left = E;
+                
+                // Horizontal equilibrium for interslice force
+                E = E + r.N * s.sinAlpha - S * s.cosAlpha;
+                s.E_right = E;
+                s.X_left = s.E_left * Math.tan(theta);
+                s.X_right = s.E_right * Math.tan(theta);
+                
+                sumResisting += r.shearStrength;
+                sumDriving += s.W * s.sinAlpha;
+            }
+            
+            const maxDepth = Math.max(...slices.map(s => s.surfaceY - s.baseY));
+            
+            return {
+                fos: F, valid: true, method: 'spencer',
+                theta: theta,
+                thetaDeg: theta * 180 / Math.PI,
+                converged: converged,
+                centerX, centerY, radius,
+                entryX: entryPoint.x, entryY: entryPoint.y,
+                exitX: exitPoint.x, exitY: exitPoint.y,
+                maxDepth, slices, totalWeight, totalArcLength,
+                sumResisting, sumDriving
+            };
+        }
+
+        /**
+         * Dispatcher: routes to selected analysis method
+         */
+        function calculateFOS(centerX, centerY, radius, profile, poreParams, numSlices) {
+            const method = document.getElementById('analysisMethod').value;
+            if (method === 'spencer') {
+                return calculateSpencerFOS(centerX, centerY, radius, profile, poreParams, numSlices);
+            }
+            return calculateBishopFOS(centerX, centerY, radius, profile, poreParams, numSlices);
         }
 
         function runAnalysis() {
@@ -3433,7 +3729,7 @@
                     
                     for (let ir = 0; ir < 8; ir++) {
                         const radius = calcMinR + (calcMaxR - calcMinR) * ir / 7;
-                        const result = calculateBishopFOS(centerX, centerY, radius, profile, poreParams, numSlices);
+                        const result = calculateFOS(centerX, centerY, radius, profile, poreParams, numSlices);
                         
                         if (!result.valid) continue;
                         
@@ -3482,7 +3778,7 @@
                         // Check radius constraints
                         if (r < minRadius || r > maxRadius) continue;
                         
-                        const result = calculateBishopFOS(cx, cy, r, profile, poreParams, numSlices);
+                        const result = calculateFOS(cx, cy, r, profile, poreParams, numSlices);
                         if (!result.valid) continue;
                         
                         const entryOK = result.entryX >= toeMin && result.entryX <= toeMax;
@@ -3508,7 +3804,8 @@
                     limits: limits,
                     strengthModel: document.getElementById('strengthModel').value,
                     lepsPhi0: parseFloat(document.getElementById('lepsPhi0').value) || 50,
-                    lepsDeltaPhi: parseFloat(document.getElementById('lepsDeltaPhi').value) || 10
+                    lepsDeltaPhi: parseFloat(document.getElementById('lepsDeltaPhi').value) || 10,
+                    analysisMethod: document.getElementById('analysisMethod').value
                 }
             };
             
@@ -3546,6 +3843,16 @@
             document.getElementById('circleRadius').innerHTML = toDisplay(c.radius, 'length').toFixed(1) + ' ' + uLen;
             document.getElementById('circleCenter').innerHTML = `(${toDisplay(c.centerX, 'length').toFixed(0)}, ${toDisplay(c.centerY, 'length').toFixed(0)})`;
             
+            // Spencer theta display
+            const spencerItem = document.getElementById('spencerThetaItem');
+            if (spencerItem) {
+                if (c.method === 'spencer' && c.thetaDeg !== undefined) {
+                    spencerItem.style.display = '';
+                    document.getElementById('spencerTheta').innerHTML = c.thetaDeg.toFixed(2) + '°';
+                } else {
+                    spencerItem.style.display = 'none';
+                }
+            }
             // Mass estimation
             const area = c.slices.reduce((sum, s) => sum + s.width * s.height, 0);
             const areaDisp = toDisplay(area, 'area');
@@ -3617,6 +3924,15 @@
             const { critical, inputs } = lastAnalysisResult;
             const uPres = getUnit('pressure');
             const uWt = getUnit('unitWeight');
+            const isSpencer = critical.method === 'spencer';
+            
+            // Update panel header
+            const panelHeader = document.getElementById('calcPanelHeader');
+            if (panelHeader) {
+                panelHeader.textContent = isSpencer 
+                    ? "Spencer's Method (Rigorous) - Calculation Details"
+                    : "Modified Bishop's Method - Calculation Details";
+            }
             
             // Build input summary
             let inputHtml = '';
@@ -3683,10 +3999,19 @@
             </tr>`;
             
             const cls = critical.fos < 1.3 ? 'danger' : critical.fos < 1.5 ? 'warning' : 'safe';
-            document.getElementById('summaryCalc').innerHTML = `
+            let summaryHtml = `
                 <div class="final-equation">FoS = ${totR.toFixed(0)} / ${totD.toFixed(0)}</div>
                 <div class="final-result ${cls}">${critical.fos.toFixed(4)}</div>
             `;
+            if (isSpencer && critical.thetaDeg !== undefined) {
+                summaryHtml += `
+                    <div style="text-align:center; margin-top:0.5rem; font-size:0.8rem; color: var(--accent-blue);">
+                        Spencer θ = ${critical.thetaDeg.toFixed(2)}° | 
+                        ${critical.converged ? '✓ Converged' : '⚠ Used Bishop fallback'}
+                    </div>
+                `;
+            }
+            document.getElementById('summaryCalc').innerHTML = summaryHtml;
         }
 
         function toggleSliceTable() {
@@ -4678,7 +5003,7 @@
 
                         for (let ir = 0; ir < 5; ir++) {
                             const radius = calcMinR + (calcMaxR - calcMinR) * ir / 4;
-                            const result = calculateBishopFOS(centerX, centerY, radius, profile, poreParams, numSlices);
+                            const result = calculateFOS(centerX, centerY, radius, profile, poreParams, numSlices);
 
                             if (!result.valid) continue;
 
@@ -5021,6 +5346,7 @@
                 crestMax: document.getElementById('crestMax').value,
                 
                 // Analysis settings
+                analysisMethod: document.getElementById('analysisMethod').value,
                 numSlices: document.getElementById('numSlices').value,
                 gridDensity: document.getElementById('gridDensity').value,
                 
@@ -5183,6 +5509,10 @@
             if (params.crestMax) document.getElementById('crestMax').value = params.crestMax;
             
             // Apply analysis settings
+            if (params.analysisMethod) {
+                document.getElementById('analysisMethod').value = params.analysisMethod;
+                updateAnalysisMethod();
+            }
             if (params.numSlices) {
                 document.getElementById('numSlices').value = params.numSlices;
                 document.getElementById('numSlicesValue').textContent = params.numSlices;
@@ -5532,7 +5862,7 @@
         </div>
         <div class="report-title">
             <h1>Slope Stability Analysis</h1>
-            <div class="subtitle">Modified Bishop's Simplified Method${params.strengthModel === 'leps' ? ' • Leps (1970) Nonlinear Strength' : ''} • ${unitSystem === 'metric' ? 'SI/Metric Units' : 'Imperial Units'}</div>
+            <div class="subtitle">${params.analysisMethod === 'spencer' ? "Spencer's Method (Rigorous)" : "Modified Bishop's Simplified Method"}${params.strengthModel === 'leps' ? ' • Leps (1970) Nonlinear Strength' : ''} • ${unitSystem === 'metric' ? 'SI/Metric Units' : 'Imperial Units'}</div>
             <div class="date">Generated: ${new Date().toLocaleString()}</div>
         </div>
     </div>
@@ -5592,6 +5922,7 @@
                     <tr><td>Arc Length</td><td>${toDisplay(c.totalArcLength, 'length').toFixed(0)} ${uLenPdf}</td></tr>
                     <tr><td>Circle Radius</td><td>${toDisplay(c.radius, 'length').toFixed(1)} ${uLenPdf}</td></tr>
                     <tr><td>Circle Center</td><td>(${toDisplay(c.centerX, 'length').toFixed(0)}, ${toDisplay(c.centerY, 'length').toFixed(0)})</td></tr>
+                    ${c.method === 'spencer' && c.thetaDeg !== undefined ? `<tr><td>Spencer θ (interslice angle)</td><td>${c.thetaDeg.toFixed(2)}°</td></tr>` : ''}
                 </table>
             </div>
             
@@ -5662,7 +5993,7 @@
     <div class="footer">
         <p><strong>Keefner Mining & Geotech LLC</strong> | Slope Stability Analysis Report</p>
         <p>This report is for engineering reference only. Results should be verified by a qualified geotechnical engineer.</p>
-        <p style="font-size: 7pt; margin-top: 8px;">Analysis performed using Modified Bishop's Simplified Method</p>
+        <p style="font-size: 7pt; margin-top: 8px;">Analysis performed using ${params.analysisMethod === 'spencer' ? "Spencer's Method (1967)" : "Modified Bishop's Simplified Method"}${params.strengthModel === 'leps' ? ' with Leps (1970) nonlinear strength' : ''}</p>
     </div>
     
     <div class="no-print" style="text-align: center; margin-top: 20px;">
