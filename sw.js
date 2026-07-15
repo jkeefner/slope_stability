@@ -1,5 +1,5 @@
 // Keefner Slope Stability Analyzer - Service Worker
-const CACHE_NAME = 'slope-stability-v1';
+const CACHE_NAME = 'slope-stability-v2';
 const ASSETS = [
     './',
     './index.html',

@@ -1446,12 +1446,30 @@
                 <label class="input-label">Pore Pressure Model</label>
                 <select id="porePressureModel" onchange="updatePorePressureUI()">
                     <option value="none">No Pore Pressure (Dry)</option>
-                    <option value="watertable">Water Table</option>
+                    <option value="watertable">Water Table (horizontal)</option>
+                    <option value="piezoline">Piezometric Line (sloping)</option>
                     <option value="ru">Ru Coefficient</option>
                     <option value="combined">Combined (Water Table + Ru)</option>
                 </select>
             </div>
-            
+
+            <div id="piezoControls" style="display: none;">
+                <div class="input-row">
+                    <div class="input-group">
+                        <label class="input-label">Depth at toe <span id="piezoToeUnit">(ft)</span></label>
+                        <input type="number" id="piezoToeDepth" value="0" min="-50" max="500" step="1">
+                    </div>
+                    <div class="input-group">
+                        <label class="input-label">Depth at crest <span id="piezoCrestUnit">(ft)</span></label>
+                        <input type="number" id="piezoCrestDepth" value="40" min="-50" max="500" step="1">
+                    </div>
+                </div>
+                <div class="input-sublabel">
+                    Straight phreatic surface, depth below ground at the toe and at the crest
+                    (linearly interpolated, clamped to the ground surface). Equal depths ≡ a horizontal water table.
+                </div>
+            </div>
+
             <div id="waterTableControls" style="display: none;">
                 <div class="input-group">
                     <label class="input-label">
@@ -1484,12 +1502,62 @@
                 </div>
             </div>
 
+            <!-- SEISMIC -->
+            <div class="section-header">🌐 Seismic (Pseudo-static)</div>
+            <div class="input-group">
+                <label class="input-label">
+                    Horizontal coefficient, k<sub>h</sub>
+                    <span class="range-value" id="seismicKhValue">0.00</span>
+                </label>
+                <input type="range" id="seismicKh" value="0" min="0" max="0.30" step="0.01"
+                       oninput="document.getElementById('seismicKhValue').textContent = parseFloat(this.value).toFixed(2)">
+                <div class="input-sublabel">
+                    Pseudo-static horizontal force k<sub>h</sub>·W toward the slope face. 0 = static.
+                    A common screening value is k<sub>h</sub> ≈ ½·PGA(g).
+                </div>
+            </div>
+
+            <!-- TENSION CRACK -->
+            <div class="section-header">🪨 Tension Crack</div>
+            <div class="input-group">
+                <label class="input-label" style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;">
+                    <input type="checkbox" id="tensionCrackEnable" style="width:auto;" onchange="updateTensionCrackUI()">
+                    Include a tension crack at the crest
+                </label>
+            </div>
+            <div id="tensionCrackControls" style="display:none;">
+                <div class="input-group">
+                    <label class="input-label">
+                        Crack water fill <span class="range-value" id="crackWaterFillValue">0%</span>
+                    </label>
+                    <input type="range" id="crackWaterFill" value="0" min="0" max="100" step="5"
+                           oninput="document.getElementById('crackWaterFillValue').textContent = this.value + '%'">
+                    <div class="input-sublabel">
+                        Auto-placed on the crest side at the most critical depth; water fill adds
+                        hydrostatic thrust on the crack face (0 = dry, 100% = full). Steep surfaces
+                        crack automatically at the active-wedge angle even when this is off.
+                    </div>
+                </div>
+            </div>
+
             <!-- MODEL PARAMETERS -->
             <div class="section-header">
                 ⚙️ Search Constraints
                 <button class="help-btn" onclick="showGeometryHelp()" title="Show geometry diagram">?</button>
             </div>
-            
+
+            <div class="input-group">
+                <label class="input-label">Failure Surface Type</label>
+                <select id="surfaceType">
+                    <option value="circular">Circular — Bishop/Spencer</option>
+                    <option value="noncircular">Non-circular — optimized (weak layers &amp; structure)</option>
+                </select>
+                <div class="input-sublabel">
+                    Non-circular runs the circular search first, then a surface-altering optimization
+                    that can follow weak seams and form a tension crack (reported via Janbu, robust).
+                </div>
+            </div>
+
             <!-- Failure Mode Presets -->
             <div class="input-group">
                 <label class="input-label">Failure Mode Preset</label>
@@ -2239,15 +2307,22 @@
         function updatePorePressureUI() {
             const model = document.getElementById('porePressureModel').value;
             const wtControls = document.getElementById('waterTableControls');
+            const piezoControls = document.getElementById('piezoControls');
             const ruControls = document.getElementById('ruControls');
             const combinedControls = document.getElementById('combinedControls');
-            
+
             wtControls.style.display = 'none';
+            if (piezoControls) piezoControls.style.display = 'none';
             ruControls.style.display = 'none';
             combinedControls.style.display = 'none';
-            
+
             if (model === 'watertable') {
                 wtControls.style.display = 'block';
+            } else if (model === 'piezoline' && piezoControls) {
+                piezoControls.style.display = 'block';
+                const u = '(' + (typeof getUnit === 'function' ? getUnit('length') : 'ft') + ')';
+                const te = document.getElementById('piezoToeUnit'), ce = document.getElementById('piezoCrestUnit');
+                if (te) te.textContent = u; if (ce) ce.textContent = u;
             } else if (model === 'ru') {
                 ruControls.style.display = 'block';
             } else if (model === 'combined') {
@@ -2257,14 +2332,23 @@
             }
         }
 
-        // Get pore pressure parameters
+        function updateTensionCrackUI() {
+            const on = document.getElementById('tensionCrackEnable').checked;
+            document.getElementById('tensionCrackControls').style.display = on ? 'block' : 'none';
+        }
+
+        // Get pore pressure parameters (imperial-internal via fromDisplay).
         function getPorePressureParams() {
             const model = document.getElementById('porePressureModel').value;
             const wtRaw = parseFloat(document.getElementById('waterTable').value) || 50;
+            const gv = id => { const e = document.getElementById(id); return e ? (parseFloat(e.value) || 0) : 0; };
             return {
                 model: model,
                 waterTableDepth: fromDisplay(wtRaw, 'length'),
-                ru: parseFloat(document.getElementById('ruCoeff').value) || 0
+                ru: parseFloat(document.getElementById('ruCoeff').value) || 0,
+                piezoRequested: model === 'piezoline',
+                piezoToeDepth: fromDisplay(gv('piezoToeDepth'), 'length'),
+                piezoCrestDepth: fromDisplay(gv('piezoCrestDepth'), 'length')
             };
         }
 
@@ -3103,11 +3187,7 @@
                     segmentIndex: segIdx,
                     startY: segmentStartY,
                     endY: currentY,
-                    material: {
-                        c: fromDisplay(seg.cohesion, 'pressure'),
-                        phi: seg.frictionAngle * Math.PI / 180,
-                        gamma: fromDisplay(seg.unitWeight, 'unitWeight')
-                    }
+                    material: makeSegmentMaterial(seg)
                 });
                 
                 if (!reachedTarget && seg.stepoutType !== 'none' && stepoutW > 0) {
@@ -3190,629 +3270,1102 @@
         /**
          * Get material properties at a given elevation
          */
-        function getMaterialAtY(y, profile) {
-            if (!advancedMode || segments.length === 0) {
-                return {
-                    c: fromDisplay(parseFloat(document.getElementById('cohesion').value), 'pressure'),
-                    phi: parseFloat(document.getElementById('frictionAngle').value) * Math.PI / 180,
-                    gamma: fromDisplay(parseFloat(document.getElementById('unitWeight').value), 'unitWeight')
-                };
+// ================== SLOPE ENGINE v3 (pure, DOM-free) ==================
+// 2D limit equilibrium, method of slices. Circular AND non-circular surfaces.
+//   Circular  : Ordinary, Bishop simplified (primary), Janbu corr., Spencer.
+//   Non-circ. : Ordinary, Janbu corrected, Spencer (general moment arm) primary.
+// Search: entry-exit sagitta circles + local refinement, then optional
+//         surface-altering optimization to a non-circular critical surface.
+// Pore pressure: dry, water table (clamped to ground), ru, combined,
+//   piezometric line. Pseudo-static seismic coefficient kh (horizontal).
+// Tension crack: optional, at the crest (upslope) end, with % water fill.
+//
+// Conventions: toe at (0,0), slope rises to the right, x/y in ft, c in psf,
+// phi in radians, gamma in pcf. Ground flat left of first / right of last pt.
+const SlopeEngine = (function () {
+    'use strict';
+    const GAMMA_W = 62.4;
+    const PA = 2116;   // atmospheric pressure, psf (imperial internal units)
+
+    // Leps (1970) nonlinear envelope: the secant friction angle decreases with
+    // effective normal stress, phi = phi0 - deltaPhi*log10(sigma'n / pa). We
+    // evaluate it at the slice's force-resolution effective base-normal stress
+    // (sigma'n = (W cosA - khW sinA - u*baseLen)/baseLen), which is independent
+    // of the factor of safety, so a single per-slice secant tan(phi) is exact
+    // and there is no coupled iteration. c is kept (rockfill is usually c=0).
+    function lepsTanPhi(s) {
+        if (!s || s.strengthModel !== 'leps') return s.tanPhi;
+        const Nf = Math.max(0, s.W * s.cosAlpha - (s.khW || 0) * s.sinAlpha - s.u * s.baseLen);
+        const sig = Math.max(Nf / s.baseLen, 0.01 * PA);
+        const phi0deg = s.phi0 * 180 / Math.PI;
+        let phiDeg = phi0deg - s.deltaPhi * Math.log10(sig / PA);
+        phiDeg = Math.max(1, Math.min(phi0deg, phiDeg));
+        return Math.tan(phiDeg * Math.PI / 180);
+    }
+
+    function surfaceYAt(x, profile) {
+        const pts = profile.points;
+        if (x <= pts[0].x) return pts[0].y;
+        if (x >= pts[pts.length - 1].x) return pts[pts.length - 1].y;
+        for (let i = 0; i < pts.length - 1; i++) {
+            const p1 = pts[i], p2 = pts[i + 1];
+            if (x >= p1.x && x <= p2.x) {
+                if (p2.x === p1.x) return Math.min(p1.y, p2.y);
+                return p1.y + (x - p1.x) / (p2.x - p1.x) * (p2.y - p1.y);
             }
-            
-            // Use segment boundaries if available (already in Imperial from buildSlopeProfile)
-            if (profile.segmentBoundaries && profile.segmentBoundaries.length > 0) {
-                for (const boundary of profile.segmentBoundaries) {
-                    if (y >= boundary.startY && y <= boundary.endY) {
-                        return boundary.material;
-                    }
-                }
-                // Default to last segment's material
-                const lastBoundary = profile.segmentBoundaries[profile.segmentBoundaries.length - 1];
-                return lastBoundary.material;
+        }
+        return pts[pts.length - 1].y;
+    }
+
+    // Linear interpolation of an ascending-x polyline (flat-extended at ends).
+    function interpPolyline(pts, x) {
+        if (x <= pts[0].x) return pts[0].y;
+        if (x >= pts[pts.length - 1].x) return pts[pts.length - 1].y;
+        for (let i = 0; i < pts.length - 1; i++) {
+            const a = pts[i], b = pts[i + 1];
+            if (x >= a.x && x <= b.x) {
+                if (b.x === a.x) return Math.min(a.y, b.y);
+                return a.y + (x - a.x) / (b.x - a.x) * (b.y - a.y);
             }
-            
-            // Fallback: Find which segment contains this elevation
-            let currentY = 0;
-            for (const seg of segments) {
-                const segHeight = fromDisplay((seg.benchHeight || 40), 'length') * (seg.numBenches || 1);
-                if (y <= currentY + segHeight) {
-                    return {
-                        c: fromDisplay(seg.cohesion, 'pressure'),
-                        phi: seg.frictionAngle * Math.PI / 180,
-                        gamma: fromDisplay(seg.unitWeight, 'unitWeight')
-                    };
-                }
-                currentY += segHeight;
+        }
+        return pts[pts.length - 1].y;
+    }
+
+    // Material at elevation y. Below the lowest layer boundary the BOTTOM
+    // layer extends downward (foundation); above the top, the top layer.
+    function materialAtY(y, profile, simpleMat) {
+        const bounds = profile.segmentBoundaries;
+        if (!bounds || bounds.length === 0) return simpleMat;
+        if (y <= bounds[0].startY) return bounds[0].material;
+        for (const b of bounds) {
+            if (y >= b.startY && y <= b.endY) return b.material;
+        }
+        return bounds[bounds.length - 1].material;
+    }
+
+    // Exact weight of a soil/rock column [baseY, topY] of given width,
+    // integrating unit weight across layer boundaries.
+    function columnWeight(baseY, topY, width, profile, simpleMat) {
+        if (topY <= baseY) return 0;
+        const bounds = profile.segmentBoundaries;
+        if (!bounds || bounds.length === 0) return simpleMat.gamma * width * (topY - baseY);
+        let w = 0, y = baseY;
+        if (y < bounds[0].startY) {
+            const seg = Math.min(topY, bounds[0].startY) - y;
+            w += bounds[0].material.gamma * seg;
+            y += seg;
+        }
+        for (const b of bounds) {
+            if (y >= topY) break;
+            const lo = Math.max(y, b.startY), hi = Math.min(topY, b.endY);
+            if (hi > lo) { w += b.material.gamma * (hi - lo); y = hi; }
+        }
+        if (y < topY) w += bounds[bounds.length - 1].material.gamma * (topY - y);
+        return w * width;
+    }
+
+    // ---- shared pore-pressure model -----------------------------------
+    // A piezometric line (poreParams.piezoLine = [{x,y}...]) takes precedence;
+    // otherwise a horizontal water table at elevation (H - waterTableDepth).
+    // Both are clamped to the ground surface (no phreatic surface above
+    // ground; ponded water weight is not added — flagged in the UI).
+    function poreContext(profile, poreParams) {
+        const H = profile.totalHeight;
+        const m = (poreParams && poreParams.model) || 'none';
+        return {
+            model: m,
+            wtElev: (m === 'watertable' || m === 'combined') ? (H - poreParams.waterTableDepth) : -Infinity,
+            ru: (m === 'ru' || m === 'combined') ? (poreParams.ru || 0) : 0,
+            piezoLine: (poreParams && poreParams.piezoLine && poreParams.piezoLine.length >= 2)
+                ? poreParams.piezoLine : null,
+            hu: (poreParams && typeof poreParams.hu === 'number') ? poreParams.hu : 1
+        };
+    }
+
+    function poreAtBase(baseY, surfY, xMid, width, profile, simpleMat, ctx) {
+        let u = 0;
+        if (ctx.piezoLine) {
+            const pz = Math.min(interpPolyline(ctx.piezoLine, xMid), surfY);
+            u += GAMMA_W * ctx.hu * Math.max(0, pz - baseY);
+        } else if (ctx.model === 'watertable' || ctx.model === 'combined') {
+            // hu applied uniformly (defaults to 1) for consistency with piezoLine
+            const piezo = Math.min(ctx.wtElev, surfY);
+            u += GAMMA_W * ctx.hu * Math.max(0, piezo - baseY);
+        }
+        if (ctx.model === 'ru') {
+            u += ctx.ru * (columnWeight(baseY, surfY, width, profile, simpleMat) / width);
+        } else if (ctx.model === 'combined') {
+            // ru models excess/partial pore pressure in the vadose zone ABOVE the
+            // water table (not the saturated column, which the hydrostatic term
+            // already covers — avoids double-counting).
+            const piezo = Math.min(ctx.wtElev, surfY);
+            const bot = Math.max(piezo, baseY);
+            if (surfY > bot) u += ctx.ru * columnWeight(bot, surfY, width, profile, simpleMat) / width;
+        }
+        return u;
+    }
+
+    // Analytic intersections of a circle with the ground surface polyline.
+    function circleSurfaceIntersections(cx, cy, R, profile) {
+        const pts = profile.points;
+        const segs = [];
+        const XL = Math.min(pts[0].x, cx - R) - 10;
+        const XR = Math.max(pts[pts.length - 1].x, cx + R) + 10;
+        segs.push([{ x: XL, y: pts[0].y }, { x: pts[0].x, y: pts[0].y }]);
+        for (let i = 0; i < pts.length - 1; i++) segs.push([pts[i], pts[i + 1]]);
+        segs.push([{ x: pts[pts.length - 1].x, y: pts[pts.length - 1].y }, { x: XR, y: pts[pts.length - 1].y }]);
+
+        const hits = [];
+        for (const [p1, p2] of segs) {
+            const dx = p2.x - p1.x, dy = p2.y - p1.y;
+            const fx = p1.x - cx, fy = p1.y - cy;
+            const a = dx * dx + dy * dy;
+            if (a < 1e-12) continue;
+            const b = 2 * (fx * dx + fy * dy);
+            const c = fx * fx + fy * fy - R * R;
+            const disc = b * b - 4 * a * c;
+            if (disc < 0) continue;
+            const sq = Math.sqrt(disc);
+            for (const t of [(-b - sq) / (2 * a), (-b + sq) / (2 * a)]) {
+                if (t < -1e-9 || t > 1 + 1e-9) continue;
+                hits.push({ x: p1.x + t * dx, y: p1.y + t * dy });
             }
-            
-            // Default to last segment
-            const lastSeg = segments[segments.length - 1];
-            return {
-                c: fromDisplay(lastSeg.cohesion, 'pressure'),
-                phi: lastSeg.frictionAngle * Math.PI / 180,
-                gamma: fromDisplay(lastSeg.unitWeight, 'unitWeight')
-            };
+        }
+        hits.sort((p, q) => p.x - q.x);
+        const out = [];
+        for (const h of hits) {
+            if (!out.length || Math.abs(h.x - out[out.length - 1].x) > 1e-6 ||
+                Math.abs(h.y - out[out.length - 1].y) > 1e-6) out.push(h);
+        }
+        return out;
+    }
+
+    function lowerArcY(x, cx, cy, R) {
+        const dx = x - cx;
+        const disc = R * R - dx * dx;
+        if (disc < 0) return null;
+        return cy - Math.sqrt(disc);
+    }
+
+    // Build a crack descriptor at x=xc with the given crack depth and water
+    // fill fraction. Hydrostatic thrust acts horizontally on the vertical face.
+    function makeCrack(xc, baseY, depth, fill) {
+        const zw = depth * Math.min(1, Math.max(0, fill || 0));
+        return { x: xc, baseY, depth, waterDepth: zw,
+            thrust: 0.5 * GAMMA_W * zw * zw, thrustArmY: baseY + zw / 3 };
+    }
+
+    // Seismic + summary post-processing (crack handled per-builder).
+    function applySeismic(built, kh) {
+        for (const s of built.slices) s.khW = kh * s.W;
+        built.seismicKh = kh;
+        let tw = 0, tl = 0, md = 0, drv = 0;
+        for (const s of built.slices) { tw += s.W; tl += s.baseLen; md = Math.max(md, s.height); drv += s.W * s.sinAlpha; }
+        built.totalWeight = tw; built.totalArcLength = tl; built.maxDepth = md; built.sumDriving = drv;
+        return built.slices.length >= 3 ? built : null;
+    }
+
+    // ---- circular slice builder (validated path preserved) -------------
+    function buildSlices(cx, cy, R, profile, simpleMat, poreParams, numSlices, opts) {
+        const inter = circleSurfaceIntersections(cx, cy, R, profile);
+        if (inter.length < 2) return null;
+        const entry = inter[0], exit = inter[inter.length - 1];
+
+        const tol = Math.max(0.01 * R, 0.05);
+        if (entry.y > cy + tol || exit.y > cy + tol) return null;
+        if (exit.x - entry.x < 1) return null;
+
+        for (let i = 1; i < 100; i++) {
+            const x = entry.x + (exit.x - entry.x) * i / 100;
+            const ay = lowerArcY(x, cx, cy, R);
+            if (ay === null) return null;
+            if (ay > surfaceYAt(x, profile) + 0.05) return null;
         }
 
-        /**
-         * Find circle-surface intersections for complex profile
-         */
-        function findCircleIntersections(centerX, centerY, radius, profile) {
-            const intersections = [];
-            const numPoints = 720;
-            
-            for (let i = 0; i < numPoints; i++) {
-                const theta = -Math.PI + (2 * Math.PI * i) / numPoints;
-                const x = centerX + radius * Math.cos(theta);
-                const y = centerY + radius * Math.sin(theta);
-                const surfaceY = getSurfaceY(x, profile);
-                const diff = y - surfaceY;
-                
-                const theta2 = -Math.PI + (2 * Math.PI * (i + 1)) / numPoints;
-                const x2 = centerX + radius * Math.cos(theta2);
-                const y2 = centerY + radius * Math.sin(theta2);
-                const surfaceY2 = getSurfaceY(x2, profile);
-                const diff2 = y2 - surfaceY2;
-                
-                if (diff * diff2 < 0) {
-                    const t = Math.abs(diff) / (Math.abs(diff) + Math.abs(diff2));
-                    intersections.push({
-                        x: x + t * (x2 - x),
-                        y: y + t * (y2 - y),
-                        theta: theta + t * (theta2 - theta)
-                    });
-                }
-            }
-            
-            intersections.sort((a, b) => a.x - b.x);
-            return intersections;
+        const ctx = poreContext(profile, poreParams);
+        const edges = [];
+        for (let i = 0; i <= numSlices; i++) edges.push(entry.x + (exit.x - entry.x) * i / numSlices);
+        for (const p of profile.points) {
+            if (p.x > entry.x + 0.01 && p.x < exit.x - 0.01) edges.push(p.x);
         }
-
-        /**
-         * Modified Bishop calculation with variable materials and Ru support
-         */
-        function calculateBishopFOS(centerX, centerY, radius, profile, poreParams, numSlices) {
-            const intersections = findCircleIntersections(centerX, centerY, radius, profile);
-            
-            if (intersections.length < 2) return { fos: Infinity, valid: false };
-            
-            const entryPoint = intersections[0];
-            const exitPoint = intersections[intersections.length - 1];
-            
-            // Check subsurface
-            let hasSubsurface = false;
-            for (let i = 1; i < 50; i++) {
-                const t = i / 50;
-                const checkX = entryPoint.x + t * (exitPoint.x - entryPoint.x);
-                const dx = checkX - centerX;
-                const disc = radius * radius - dx * dx;
-                if (disc < 0) continue;
-                const checkY = centerY - Math.sqrt(disc);
-                if (checkY < getSurfaceY(checkX, profile) - 0.5) {
-                    hasSubsurface = true;
-                    break;
-                }
-            }
-            
-            if (!hasSubsurface) return { fos: Infinity, valid: false };
-            
-            const xStart = entryPoint.x;
-            const xEnd = exitPoint.x;
-            const sliceWidth = (xEnd - xStart) / numSlices;
-            
-            if (sliceWidth <= 0) return { fos: Infinity, valid: false };
-            
-            const H = profile.totalHeight;
-            const gammaW = 62.4;
-            
-            // Pore pressure model parameters
-            const ppModel = poreParams.model || 'none';
-            const waterTableY = (ppModel === 'watertable' || ppModel === 'combined') 
-                ? (H - poreParams.waterTableDepth) : -Infinity;
-            const ru = (ppModel === 'ru' || ppModel === 'combined') 
-                ? poreParams.ru : 0;
-            
-            const slices = [];
-            let totalWeight = 0;
-            let totalArcLength = 0;
-            
-            for (let i = 0; i < numSlices; i++) {
-                const xMid = xStart + (i + 0.5) * sliceWidth;
-                const surfaceY = getSurfaceY(xMid, profile);
-                
-                const dx = xMid - centerX;
-                const disc = radius * radius - dx * dx;
-                if (disc < 0) continue;
-                
-                const baseY = centerY - Math.sqrt(disc);
-                if (baseY >= surfaceY) continue;
-                
-                const sliceHeight = surfaceY - baseY;
-                if (sliceHeight <= 0) continue;
-                
-                // Get material at slice center elevation
-                const midY = (surfaceY + baseY) / 2;
-                const mat = getMaterialAtY(midY, profile);
-                
-                const alpha = Math.atan2(xMid - centerX, centerY - baseY);
-                const W = mat.gamma * sliceWidth * sliceHeight;
-                totalWeight += W;
-                totalArcLength += Math.abs(sliceWidth / Math.cos(alpha));
-                
-                // Calculate pore pressure based on model
-                let u = 0;
-                let uFromWT = 0;
-                let uFromRu = 0;
-                
-                if (ppModel === 'watertable' && baseY < waterTableY) {
-                    // Traditional water table approach
-                    uFromWT = gammaW * (waterTableY - baseY);
-                    u = uFromWT;
-                } else if (ppModel === 'ru') {
-                    // Ru approach: u = ru * σv = ru * γ * h
-                    // Using total vertical stress at slice base
-                    const totalStress = mat.gamma * sliceHeight;
-                    uFromRu = ru * totalStress;
-                    u = uFromRu;
-                } else if (ppModel === 'combined') {
-                    // Combined: Water table + Ru for additional pressure below WT
-                    if (baseY < waterTableY) {
-                        uFromWT = gammaW * (waterTableY - baseY);
-                        // Ru applies to the saturated portion below water table
-                        const saturatedHeight = waterTableY - baseY;
-                        const totalStressBelowWT = mat.gamma * saturatedHeight;
-                        uFromRu = ru * totalStressBelowWT;
-                        u = uFromWT + uFromRu;
+        if (profile.segmentBoundaries) {
+            for (const b of profile.segmentBoundaries) {
+                for (const yb of [b.startY, b.endY]) {
+                    if (yb >= cy - R && yb < cy) {
+                        const half = Math.sqrt(R * R - (cy - yb) * (cy - yb));
+                        for (const x of [cx - half, cx + half]) {
+                            if (x > entry.x + 0.01 && x < exit.x - 0.01) edges.push(x);
+                        }
                     }
                 }
-                
-                slices.push({
-                    index: i + 1,
-                    x: xMid,
-                    width: sliceWidth,
-                    height: sliceHeight,
-                    baseY, surfaceY,
-                    W, u, uFromWT, uFromRu,
-                    c: mat.c,
-                    phi: mat.phi,
-                    gamma: mat.gamma,
-                    alpha,
-                    alphaDeg: alpha * 180 / Math.PI,
-                    sinAlpha: Math.sin(alpha),
-                    cosAlpha: Math.cos(alpha),
-                    tanPhi: Math.tan(mat.phi)
-                });
             }
-            
-            if (slices.length === 0) return { fos: Infinity, valid: false };
-            
-            let sumDriving = slices.reduce((sum, s) => sum + s.W * s.sinAlpha, 0);
-            if (sumDriving <= 0) return { fos: Infinity, valid: false };
-            
-            // Iterative solution
-            let FoS = 1.5;
-            for (let iter = 0; iter < 50; iter++) {
-                let sumResisting = 0;
-                
-                for (const s of slices) {
-                    const m_alpha = s.cosAlpha + (s.sinAlpha * s.tanPhi) / FoS;
-                    if (m_alpha <= 0.1) continue;
-                    s.m_alpha = m_alpha;
-                    const effNormal = s.W - s.u * s.width;
-                    s.resisting = (s.c * s.width + effNormal * s.tanPhi) / m_alpha;
-                    s.driving = s.W * s.sinAlpha;
-                    sumResisting += s.resisting;
+        }
+        edges.sort((a, b) => a - b);
+
+        let slices = [];
+        let totalWeight = 0, totalArcLength = 0, maxDepth = 0, idx = 0;
+        for (let i = 0; i < edges.length - 1; i++) {
+            const x1 = edges[i], x2 = edges[i + 1];
+            const width = x2 - x1;
+            if (width < 1e-4) continue;
+            const xMid = (x1 + x2) / 2;
+            const baseY = lowerArcY(xMid, cx, cy, R);
+            if (baseY === null) continue;
+            const surfY = surfaceYAt(xMid, profile);
+            const h = surfY - baseY;
+            if (h <= 0.001) continue;
+
+            const alpha = Math.atan2(xMid - cx, cy - baseY);
+            const cosA = Math.cos(alpha), sinA = Math.sin(alpha);
+            const baseLen = width / cosA;
+            const mat = materialAtY(baseY - 0.01, profile, simpleMat);
+            const W = columnWeight(baseY, surfY, width, profile, simpleMat);
+            const u = poreAtBase(baseY, surfY, xMid, width, profile, simpleMat, ctx);
+
+            idx++;
+            slices.push({
+                index: idx, x: xMid, width, height: h, baseY, surfaceY: surfY,
+                W, u, khW: 0, c: mat.c, phi: mat.phi, gamma: mat.gamma,
+                strengthModel: mat.strengthModel, phi0: mat.phi0, deltaPhi: mat.deltaPhi,
+                alpha, alphaDeg: alpha * 180 / Math.PI,
+                sinAlpha: sinA, cosAlpha: cosA, baseLen, tanPhi: Math.tan(mat.phi)
+            });
+            totalWeight += W;
+            totalArcLength += baseLen;
+            if (h > maxDepth) maxDepth = h;
+        }
+        if (slices.length < 3 || maxDepth < 1) return null;
+
+        opts = opts || {};
+        let crack = null;
+        // The slip mass is bounded on the crest side by a tension crack (the
+        // slices span from the entry to the crack); entry/exit still describe
+        // where the arc meets the ground, for zone filtering and display.
+        if (opts.tensionCrack && isFinite(opts.tensionCrack.x)) {
+            const xc = opts.tensionCrack.x;
+            const kept = slices.filter(s => s.x <= xc);
+            if (kept.length >= 3) {
+                const byc = lowerArcY(xc, cx, cy, R);
+                const depth = byc != null ? Math.max(0, surfaceYAt(xc, profile) - byc) : 0;
+                crack = makeCrack(xc, byc, depth, opts.crackWaterFill);
+                slices = kept;
+            }
+        } else if (opts.autoCrack === true) {
+            // Automatic tension crack at the active-wedge limit (45 + phi/2,
+            // matching the non-circular admissibility cap): a slip surface
+            // steeper than this is kinematically a tension crack, not shear.
+            // Trim the crest-side run of over-steep slices and replace them with
+            // a vertical crack (matches Slide2/SLOPE-W "tension crack angle").
+            // This keeps Bishop consistent with Ordinary/Spencer on steep
+            // multi-bench walls where a full-arc Bishop under-reads.
+            let cut = slices.length;
+            for (let i = slices.length - 1; i >= 0; i--) {
+                const cap = 45 + (slices[i].phi * 180 / Math.PI) / 2 + 0.5;
+                if (slices[i].alphaDeg > cap) cut = i; else break;
+            }
+            if (cut >= 3 && cut < slices.length) {
+                const xc = slices[cut].x - slices[cut].width / 2;
+                const byc = lowerArcY(xc, cx, cy, R);
+                const depth = byc != null ? Math.max(0, surfaceYAt(xc, profile) - byc) : 0;
+                if (depth > 0.5) {
+                    crack = makeCrack(xc, byc, depth, opts.crackWaterFill);
+                    crack.auto = true;
+                    slices = slices.slice(0, cut);
                 }
-                
-                const newFoS = sumResisting / sumDriving;
-                if (Math.abs(newFoS - FoS) < 0.0001) { FoS = newFoS; break; }
-                FoS = 0.7 * newFoS + 0.3 * FoS;
             }
-            
-            // Final pass
-            let sumResisting = 0;
+        }
+        if (slices.length < 3) return null;
+
+        const sumDriving = slices.reduce((s, sl) => s + sl.W * sl.sinAlpha, 0);
+        if (sumDriving <= 0) return null;
+
+        const built = applySeismic({ slices, entry, exit, totalWeight, totalArcLength, maxDepth, sumDriving, crack }, opts.seismicKh || 0);
+        // Seismic driving for a moment method (Bishop): the horizontal force
+        // kh*W acts at the slice centroid; its moment about the centre, in
+        // sum(W sinAlpha) units, is kh*W*(cy - yCentroid)/R.
+        if (built) for (const s of built.slices) {
+            s.khDrive = s.khW * (cy - (s.surfaceY + s.baseY) / 2) / R;
+            if (s.strengthModel === 'leps') s.tanPhi = lepsTanPhi(s);
+        }
+        return built;
+    }
+
+    // ---- non-circular slice builder (arbitrary slip polyline) ----------
+    function buildSlicesFromSurface(surfPts, profile, simpleMat, poreParams, numSlices, opts) {
+        if (!surfPts || surfPts.length < 2) return null;
+        const pts = surfPts.slice().sort((a, b) => a.x - b.x);
+        const entry = pts[0], exit = pts[pts.length - 1];
+        if (exit.x - entry.x < 1) return null;
+
+        // slip surface must lie at/below the ground surface throughout
+        for (let i = 0; i < pts.length; i++) {
+            if (pts[i].y > surfaceYAt(pts[i].x, profile) + 0.05) return null;
+        }
+        for (let i = 1; i < 60; i++) {
+            const x = entry.x + (exit.x - entry.x) * i / 60;
+            if (interpPolyline(pts, x) > surfaceYAt(x, profile) + 0.05) return null;
+        }
+
+        const ctx = poreContext(profile, poreParams);
+        const edges = [];
+        for (let i = 0; i <= numSlices; i++) edges.push(entry.x + (exit.x - entry.x) * i / numSlices);
+        for (const p of pts) if (p.x > entry.x + 0.01 && p.x < exit.x - 0.01) edges.push(p.x);
+        for (const p of profile.points) if (p.x > entry.x + 0.01 && p.x < exit.x - 0.01) edges.push(p.x);
+        edges.sort((a, b) => a - b);
+
+        const slices = [];
+        let totalWeight = 0, totalArcLength = 0, maxDepth = 0, idx = 0;
+        for (let i = 0; i < edges.length - 1; i++) {
+            const x1 = edges[i], x2 = edges[i + 1];
+            const width = x2 - x1;
+            if (width < 1e-4) continue;
+            const y1 = interpPolyline(pts, x1), y2 = interpPolyline(pts, x2);
+            const xMid = (x1 + x2) / 2;
+            const baseY = (y1 + y2) / 2;
+            const surfY = surfaceYAt(xMid, profile);
+            const h = surfY - baseY;
+            // A slice base above the ground (h < 0) means the slip surface pokes
+            // out between the coarse admissibility samples — reject the whole
+            // surface rather than silently dropping the slice (which would shrink
+            // the mass and report a spuriously low FoS).
+            if (h < -0.05) return null;
+            if (h <= 0.001) continue;
+
+            const alpha = Math.atan2(y2 - y1, width);          // exact base inclination
+            const cosA = Math.cos(alpha), sinA = Math.sin(alpha);
+            if (cosA < 1e-4) continue;
+            const baseLen = width / cosA;
+            const mat = materialAtY(baseY - 0.01, profile, simpleMat);
+            const W = columnWeight(baseY, surfY, width, profile, simpleMat);
+            const u = poreAtBase(baseY, surfY, xMid, width, profile, simpleMat, ctx);
+
+            idx++;
+            slices.push({
+                index: idx, x: xMid, width, height: h, baseY, surfaceY: surfY,
+                W, u, khW: 0, c: mat.c, phi: mat.phi, gamma: mat.gamma,
+                strengthModel: mat.strengthModel, phi0: mat.phi0, deltaPhi: mat.deltaPhi,
+                alpha, alphaDeg: alpha * 180 / Math.PI,
+                sinAlpha: sinA, cosAlpha: cosA, baseLen, tanPhi: Math.tan(mat.phi)
+            });
+            totalWeight += W;
+            totalArcLength += baseLen;
+            if (h > maxDepth) maxDepth = h;
+        }
+        if (slices.length < 3 || maxDepth < 0.5) return null;
+        const sumDriving = slices.reduce((s, sl) => s + sl.W * sl.sinAlpha, 0);
+        if (sumDriving <= 0) return null;
+
+        // Implicit tension crack: if the crest-side terminus sits below the
+        // ground surface, a vertical crack spans from it up to the ground.
+        opts = opts || {};
+        let crack = null;
+        const crackDepth = surfaceYAt(exit.x, profile) - exit.y;
+        if (crackDepth > 0.1) crack = makeCrack(exit.x, exit.y, crackDepth, opts.crackWaterFill);
+
+        const built = applySeismic({ slices, entry, exit, totalWeight, totalArcLength, maxDepth, sumDriving, surfacePoints: pts, crack }, opts.seismicKh || 0);
+        // Non-circular uses force methods (Janbu/Spencer); the moment-method
+        // seismic term falls back to the along-base component.
+        if (built) for (const s of built.slices) {
+            s.khDrive = s.khW * s.cosAlpha;
+            if (s.strengthModel === 'leps') s.tanPhi = lepsTanPhi(s);
+        }
+        return built;
+    }
+
+    // --- Method solvers (shape-agnostic; use per-slice geometry) --------
+    // Seismic: horizontal pseudo-static force s.khW acts toward the toe
+    // (destabilizing). Along-base driving component = khW*cosAlpha; it reduces
+    // the base-normal by khW*sinAlpha.
+
+    function solveOMS(slices) {
+        let num = 0, den = 0;
+        for (const s of slices) {
+            const effN = Math.max(0, s.W * s.cosAlpha - s.khW * s.sinAlpha - s.u * s.baseLen);
+            num += s.c * s.baseLen + effN * s.tanPhi;
+            // Seismic driving uses the same lever as Bishop (khDrive: centroid
+            // moment for circular, along-base force for planar/non-circular),
+            // so OMS and Bishop are consistent about the circle centre.
+            den += s.W * s.sinAlpha + (s.khDrive != null ? s.khDrive : s.khW * s.cosAlpha);
+        }
+        return den > 0 ? num / den : Infinity;
+    }
+
+    function solveBishop(slices, F0, warnings) {
+        let F = F0 > 0 && isFinite(F0) ? F0 : 1.2;
+        let mAlphaWarn = false, tensionWarn = false, sumRes = 0;
+        // Bishop is a moment method: the horizontal seismic force does not
+        // enter the (vertical-equilibrium) base normal, only the driving moment.
+        const sumDrv = slices.reduce((s, sl) => s + sl.W * sl.sinAlpha + (sl.khDrive || 0), 0);
+        for (let it = 0; it < 200; it++) {
+            sumRes = 0;
             for (const s of slices) {
-                const m_alpha = s.cosAlpha + (s.sinAlpha * s.tanPhi) / FoS;
-                s.m_alpha = m_alpha;
-                const effNormal = s.W - s.u * s.width;
-                s.resisting = (s.c * s.width + effNormal * s.tanPhi) / m_alpha;
-                sumResisting += s.resisting;
+                let m = s.cosAlpha + (s.sinAlpha * s.tanPhi) / F;
+                if (s.tanPhi > 1e-6) { if (m < 0.2) { m = 0.2; mAlphaWarn = true; } }
+                else { m = Math.max(m, 0.03); }
+                let effN = s.W - s.u * s.width;
+                if (effN < 0) { effN = 0; tensionWarn = true; }
+                sumRes += (s.c * s.width + effN * s.tanPhi) / m;
             }
-            
-            const maxDepth = Math.max(...slices.map(s => s.surfaceY - s.baseY));
-            
-            if (!isFinite(FoS) || FoS <= 0 || FoS > 100) return { fos: Infinity, valid: false };
-            
-            return {
-                fos: FoS, valid: true, method: 'bishop',
-                centerX, centerY, radius,
-                entryX: entryPoint.x, entryY: entryPoint.y,
-                exitX: exitPoint.x, exitY: exitPoint.y,
-                maxDepth, slices, totalWeight, totalArcLength,
-                sumResisting, sumDriving
-            };
+            const Fn = sumRes / sumDrv;
+            if (!isFinite(Fn) || Fn <= 0) return { F: NaN, converged: false };
+            if (Math.abs(Fn - F) < 1e-5) {
+                if (mAlphaWarn) warnings.add('malpha');
+                if (tensionWarn) warnings.add('tension');
+                return { F: Fn, converged: true, sumRes, sumDrv };
+            }
+            F = 0.6 * Fn + 0.4 * F;
+        }
+        return { F, converged: false, sumRes, sumDrv };
+    }
+
+    function solveJanbu(slices, entry, exit, F0, extraDrive) {
+        let F = F0 > 0 && isFinite(F0) ? F0 : 1.2;
+        let num = 0;
+        const den = slices.reduce((s, sl) => s + sl.W * Math.tan(sl.alpha) + sl.khW, 0);
+        if (den <= 0) return { F: NaN, f0: 1, converged: false };
+        for (let it = 0; it < 200; it++) {
+            num = 0;
+            for (const s of slices) {
+                let m = s.cosAlpha + (s.sinAlpha * s.tanPhi) / F;
+                if (m < 0.2) m = 0.2;
+                let effN = s.W - s.u * s.width;   // vertical-equilibrium normal (no seismic term)
+                if (effN < 0) effN = 0;
+                num += (s.c * s.width + effN * s.tanPhi) / (s.cosAlpha * m);
+            }
+            const Fn = num / den;
+            if (!isFinite(Fn) || Fn <= 0) return { F: NaN, f0: 1, converged: false };
+            if (Math.abs(Fn - F) < 1e-5) { F = Fn; break; }
+            F = 0.6 * Fn + 0.4 * F;
+        }
+        const Lx = exit.x - entry.x, Ly = exit.y - entry.y;
+        const L = Math.hypot(Lx, Ly);
+        let dMax = 0;
+        for (const s of slices) {
+            const t = ((s.x - entry.x) * Lx + (s.baseY - entry.y) * Ly) / (L * L);
+            const px = entry.x + t * Lx, py = entry.y + t * Ly;
+            const d = Math.hypot(s.x - px, s.baseY - py);
+            if (d > dMax) dMax = d;
+        }
+        // Janbu's empirical f0 is calibrated for depth ratios up to ~0.6; the
+        // quadratic turns over at dL=0.357 and dips below 1 past dL=0.714, which
+        // would non-conservatively lower the FoS on deep surfaces. Cap dL at the
+        // validity limit and never let the correction fall below 1.
+        const dL = Math.min(dMax / L, 0.6);
+        const hasC = slices.some(s => s.c > 0), hasPhi = slices.some(s => s.tanPhi > 1e-6);
+        const b1 = hasC && hasPhi ? 0.50 : (hasC ? 0.69 : 0.31);
+        const f0 = Math.max(1, 1 + b1 * (dL - 1.4 * dL * dL));
+        return { F: F * f0, Funcorrected: F, f0, converged: true };
+    }
+
+    // Spencer (1967): parallel interslice forces at angle theta.
+    //   Force  : sum Q = 0
+    //   Moment : sum of moment of Q about a reference point = 0  (general form,
+    //            reduces to sum Q*cos(alpha-theta)=0 for a circle).
+    // Seismic khW enters the driving term (W sinAlpha + khW cosAlpha as the
+    // gravity+seismic component resolved along the base direction).
+    function spencerSumQ(slices, F, theta, moment, ref) {
+        let s0 = 0;
+        for (const s of slices) {
+            const effN = Math.max(0, s.W * s.cosAlpha - s.khW * s.sinAlpha - s.u * s.baseLen);
+            const drive = s.W * s.sinAlpha + s.khW * s.cosAlpha;
+            const numer = drive - (s.c * s.baseLen + effN * s.tanPhi) / F;
+            const am = s.alpha - theta;
+            const denom = Math.cos(am) * (1 + (s.tanPhi / F) * Math.tan(am));
+            if (!isFinite(denom) || Math.abs(denom) < 0.02) return NaN;
+            const Q = numer / denom;
+            if (moment) {
+                // moment of Q (acting at (x, baseY) along direction theta) about ref
+                s0 += Q * ((s.x - ref.x) * Math.sin(theta) - (s.baseY - ref.y) * Math.cos(theta));
+            } else {
+                s0 += Q;
+            }
+        }
+        return s0;
+    }
+
+    function spencerSolveF(slices, theta, moment, Fguess, ref) {
+        const ladder = [];
+        for (let f = 0.3; f <= 25; f *= 1.18) ladder.push(f);
+        let lo = NaN, hi = NaN, flo = NaN, bestDist = Infinity;
+        let pf = NaN, pv = NaN;
+        for (const f of ladder) {
+            const v = spencerSumQ(slices, f, theta, moment, ref);
+            if (isFinite(v) && isFinite(pv) && pv * v <= 0) {
+                const mid = (pf + f) / 2;
+                const dist = Math.abs(Math.log(mid / (Fguess || 1.5)));
+                if (dist < bestDist) { bestDist = dist; lo = pf; hi = f; flo = pv; }
+            }
+            pf = f; pv = isFinite(v) ? v : NaN;
+        }
+        if (!isFinite(lo)) return NaN;
+        for (let i = 0; i < 60; i++) {
+            const mid = (lo + hi) / 2;
+            const fm = spencerSumQ(slices, mid, theta, moment, ref);
+            if (!isFinite(fm)) return NaN;
+            if (flo * fm <= 0) { hi = mid; } else { lo = mid; flo = fm; }
+        }
+        return (lo + hi) / 2;
+    }
+
+    function solveSpencer(slices, Fguess) {
+        const ref = { x: slices[0].x, y: slices[0].baseY };
+        let bestTheta = NaN, bestF = NaN, prevTheta = null, prevDiff = null;
+        const thMin = -20 * Math.PI / 180, thMax = 70 * Math.PI / 180;
+        for (let i = 0; i <= 45; i++) {
+            const th = thMin + (thMax - thMin) * i / 45;
+            const Ff = spencerSolveF(slices, th, false, Fguess, ref);
+            const Fm = spencerSolveF(slices, th, true, Fguess, ref);
+            if (!isFinite(Ff) || !isFinite(Fm)) { prevTheta = null; continue; }
+            const diff = Ff - Fm;
+            if (prevTheta !== null && prevDiff * diff <= 0) {
+                let tlo = prevTheta, thi = th, dlo = prevDiff;
+                for (let k = 0; k < 40; k++) {
+                    const tm = (tlo + thi) / 2;
+                    const d = spencerSolveF(slices, tm, false, Fguess, ref) - spencerSolveF(slices, tm, true, Fguess, ref);
+                    if (!isFinite(d)) break;
+                    if (dlo * d <= 0) thi = tm; else { tlo = tm; dlo = d; }
+                }
+                bestTheta = (tlo + thi) / 2;
+                bestF = spencerSolveF(slices, bestTheta, true, Fguess, ref);
+                break;
+            }
+            prevTheta = th; prevDiff = diff;
+        }
+        if (!isFinite(bestF)) return { F: NaN, theta: NaN, converged: false };
+        return { F: bestF, theta: bestTheta, converged: true };
+    }
+
+    // Apply crack water thrust as an extra driving term to a computed FoS.
+    // For a circular surface the horizontal thrust Pw contributes a driving
+    // moment Pw*(cy - yThrust) about the centre; dividing by R converts it to
+    // the same units as sum(W sinAlpha). For a force method (non-circular) the
+    // thrust adds directly to the horizontal driving.
+    function crackAdjust(F, slices, crack, circle) {
+        if (!crack || crack.thrust <= 0) return F;
+        const drv = slices.reduce((s, sl) => s + sl.W * sl.sinAlpha + (sl.khDrive || 0), 0);
+        // A horizontal crack-water thrust is always destabilizing: the extra
+        // driving must never be negative (clamp guards the case where the thrust
+        // line of action sits above the circle centre).
+        const extra = (circle && circle.R)
+            ? Math.max(0, crack.thrust * (circle.cy - crack.thrustArmY) / circle.R)
+            : crack.thrust;
+        return (F * drv) / (drv + extra);
+    }
+
+    // --- analyze one circular surface -----------------------------------
+    function analyzeCircle(cx, cy, R, profile, simpleMat, poreParams, numSlices, allMethods, opts) {
+        const built = buildSlices(cx, cy, R, profile, simpleMat, poreParams, numSlices, opts);
+        if (!built) return { fos: Infinity, valid: false };
+        const { slices, entry, exit, totalWeight, totalArcLength, maxDepth, sumDriving, crack } = built;
+
+        const warnings = new Set();
+        const fosOMS = solveOMS(slices);
+        const bishop = solveBishop(slices, fosOMS, warnings);
+        if (!isFinite(bishop.F) || bishop.F <= 0) return { fos: Infinity, valid: false };
+        const circleRef = { cy, R };
+        let F = crackAdjust(bishop.F, slices, crack, circleRef);
+        if (!bishop.converged) warnings.add('noconv');
+        if (F > 100) return { fos: Infinity, valid: false };
+        if (crack) warnings.add('tensioncrack');
+
+        let sumResisting = 0;
+        for (const s of slices) {
+            let m = s.cosAlpha + (s.sinAlpha * s.tanPhi) / bishop.F;
+            if (m < 0.2) m = 0.2;
+            let effN = s.W - s.u * s.width;
+            if (effN < 0) effN = 0;
+            s.m_alpha = m;
+            s.resisting = (s.c * s.width + effN * s.tanPhi) / m;
+            s.driving = s.W * s.sinAlpha + (s.khDrive || 0);
+            sumResisting += s.resisting;
         }
 
-        /**
-         * Spencer's Method (1967) - Rigorous limit equilibrium
-         * Satisfies both moment and force equilibrium by iterating on
-         * the interslice force inclination angle θ.
-         *
-         * For each slice, normal force on base (derived from combined
-         * horizontal + vertical equilibrium, eliminating interslice forces):
-         *   N_i = [W_i·cosθ − (c'_i − u_i·tanφ'_i)·l_i·sin(α_i−θ)/F]
-         *         / [cos(α_i−θ) + tanφ'_i·sin(α_i−θ)/F]
-         *
-         * Moment equilibrium (circular, about center):
-         *   F_m = Σ[c'·l + (N − u·l)·tanφ'] / Σ[W·sinα]
-         *
-         * Force equilibrium (horizontal):
-         *   F_f = Σ[(c'·l + (N − u·l)·tanφ')·cosα] / Σ[N·sinα]
-         *
-         * Solution: find θ where F_m(θ) = F_f(θ)
-         */
-        function calculateSpencerFOS(centerX, centerY, radius, profile, poreParams, numSlices) {
-            // Build slices identically to Bishop
-            const intersections = findCircleIntersections(centerX, centerY, radius, profile);
-            if (intersections.length < 2) return { fos: Infinity, valid: false };
-            
-            const entryPoint = intersections[0];
-            const exitPoint = intersections[intersections.length - 1];
-            
-            let hasSubsurface = false;
-            for (let i = 1; i < 50; i++) {
-                const t = i / 50;
-                const checkX = entryPoint.x + t * (exitPoint.x - entryPoint.x);
-                const dx = checkX - centerX;
-                const disc = radius * radius - dx * dx;
-                if (disc < 0) continue;
-                const checkY = centerY - Math.sqrt(disc);
-                if (checkY < getSurfaceY(checkX, profile) - 0.5) { hasSubsurface = true; break; }
-            }
-            if (!hasSubsurface) return { fos: Infinity, valid: false };
-            
-            const xStart = entryPoint.x;
-            const xEnd = exitPoint.x;
-            const sliceWidth = (xEnd - xStart) / numSlices;
-            if (sliceWidth <= 0) return { fos: Infinity, valid: false };
-            
-            const H = profile.totalHeight;
-            const gammaW = 62.4;
-            const ppModel = poreParams.model || 'none';
-            const waterTableY = (ppModel === 'watertable' || ppModel === 'combined')
-                ? (H - poreParams.waterTableDepth) : -Infinity;
-            const ru = (ppModel === 'ru' || ppModel === 'combined') ? poreParams.ru : 0;
-            
-            const slices = [];
-            let totalWeight = 0;
-            let totalArcLength = 0;
-            
-            for (let i = 0; i < numSlices; i++) {
-                const xMid = xStart + (i + 0.5) * sliceWidth;
-                const surfaceY = getSurfaceY(xMid, profile);
-                const dx = xMid - centerX;
-                const disc = radius * radius - dx * dx;
-                if (disc < 0) continue;
-                const baseY = centerY - Math.sqrt(disc);
-                if (baseY >= surfaceY) continue;
-                const sliceHeight = surfaceY - baseY;
-                if (sliceHeight <= 0) continue;
-                
-                const midY = (surfaceY + baseY) / 2;
-                const mat = getMaterialAtY(midY, profile);
-                const alpha = Math.atan2(xMid - centerX, centerY - baseY);
-                const W = mat.gamma * sliceWidth * sliceHeight;
-                totalWeight += W;
-                totalArcLength += Math.abs(sliceWidth / Math.cos(alpha));
-                
-                let u = 0, uFromWT = 0, uFromRu = 0;
-                if (ppModel === 'watertable' && baseY < waterTableY) {
-                    uFromWT = gammaW * (waterTableY - baseY); u = uFromWT;
-                } else if (ppModel === 'ru') {
-                    uFromRu = ru * mat.gamma * sliceHeight; u = uFromRu;
-                } else if (ppModel === 'combined' && baseY < waterTableY) {
-                    uFromWT = gammaW * (waterTableY - baseY);
-                    uFromRu = ru * mat.gamma * (waterTableY - baseY);
-                    u = uFromWT + uFromRu;
-                }
-                
-                slices.push({
-                    index: i + 1, x: xMid, width: sliceWidth,
-                    height: sliceHeight, baseY, surfaceY,
-                    W, u, uFromWT, uFromRu,
-                    c: mat.c, phi: mat.phi, gamma: mat.gamma,
-                    alpha, alphaDeg: alpha * 180 / Math.PI,
-                    sinAlpha: Math.sin(alpha), cosAlpha: Math.cos(alpha),
-                    tanPhi: Math.tan(mat.phi),
-                    baseLength: Math.abs(sliceWidth / Math.cos(alpha))
-                });
-            }
-            
-            if (slices.length === 0) return { fos: Infinity, valid: false };
-            
-            const sumWsinA = slices.reduce((sum, s) => sum + s.W * s.sinAlpha, 0);
-            if (sumWsinA <= 0) return { fos: Infinity, valid: false };
-            
-            // --- Spencer dual iteration on F and θ ---
-            // Helper: compute N_i for all slices given F and θ
-            function computeSliceNormals(F, theta) {
-                const results = [];
-                let valid = true;
-                for (const s of slices) {
-                    const aMinusT = s.alpha - theta;
-                    const sinAT = Math.sin(aMinusT);
-                    const cosAT = Math.cos(aMinusT);
-                    const denom = cosAT + s.tanPhi * sinAT / F;
-                    if (Math.abs(denom) < 0.001) { valid = false; break; }
-                    
-                    const l = s.baseLength;
-                    const N = (s.W * Math.cos(theta) - (s.c - s.u * s.tanPhi) * l * sinAT / F) / denom;
-                    const shearStrength = s.c * l + Math.max(0, N - s.u * l) * s.tanPhi;
-                    
-                    results.push({ N, shearStrength, slice: s });
-                }
-                return { results, valid };
-            }
-            
-            // Helper: compute F_m (moment equilibrium) for given θ
-            function computeFm(theta) {
-                let F = 1.5;
-                for (let iter = 0; iter < 60; iter++) {
-                    const { results, valid } = computeSliceNormals(F, theta);
-                    if (!valid) return NaN;
-                    
-                    const sumStrength = results.reduce((s, r) => s + r.shearStrength, 0);
-                    const newF = sumStrength / sumWsinA;
-                    if (!isFinite(newF) || newF <= 0) return NaN;
-                    if (Math.abs(newF - F) < 0.00005) return newF;
-                    F = 0.7 * newF + 0.3 * F;
-                }
-                return F;
-            }
-            
-            // Helper: compute F_f (force equilibrium) for given F and θ
-            function computeFf(F, theta) {
-                const { results, valid } = computeSliceNormals(F, theta);
-                if (!valid) return NaN;
-                
-                let sumNum = 0, sumDen = 0;
-                for (const r of results) {
-                    sumNum += r.shearStrength * r.slice.cosAlpha;
-                    sumDen += r.N * r.slice.sinAlpha;
-                }
-                if (Math.abs(sumDen) < 0.001) return NaN;
-                return sumNum / sumDen;
-            }
-            
-            // Iterate: find θ where F_m(θ) = F_f(F_m, θ)
-            let theta = 0;
-            let F = computeFm(0);
-            if (!isFinite(F) || F <= 0) {
-                // Fall back to Bishop if Spencer fails to initialize
-                return calculateBishopFOS(centerX, centerY, radius, profile, poreParams, numSlices);
-            }
-            
-            let converged = false;
-            for (let outerIter = 0; outerIter < 40; outerIter++) {
-                const Fm = computeFm(theta);
-                if (!isFinite(Fm) || Fm <= 0) break;
-                
-                const Ff = computeFf(Fm, theta);
-                if (!isFinite(Ff) || Ff <= 0) break;
-                
-                const residual = Ff - Fm;
-                
-                if (Math.abs(residual) < 0.0005) {
-                    F = (Fm + Ff) / 2;
-                    converged = true;
-                    break;
-                }
-                
-                // Numerical derivative: d(Ff-Fm)/dθ
-                const dTheta = 0.005;
-                const FmPlus = computeFm(theta + dTheta);
-                const FfPlus = computeFf(FmPlus, theta + dTheta);
-                const dResidual = (FfPlus - FmPlus) - residual;
-                
-                if (Math.abs(dResidual) > 0.0001) {
-                    // Newton-Raphson step with damping
-                    const step = -residual / (dResidual / dTheta);
-                    theta += Math.max(-0.15, Math.min(0.15, step * 0.6));
-                } else {
-                    // Fallback: simple proportional adjustment
-                    theta += residual * 0.3;
-                }
-                
-                // Clamp θ to physically reasonable range (±30°)
-                theta = Math.max(-Math.PI / 6, Math.min(Math.PI / 6, theta));
-                F = Fm;
-            }
-            
-            if (!converged || !isFinite(F) || F <= 0 || F > 100) {
-                // If Spencer didn't converge, fall back to Bishop
-                return calculateBishopFOS(centerX, centerY, radius, profile, poreParams, numSlices);
-            }
-            
-            // Final pass: compute slice details with converged F and θ
-            const { results: finalSliceData } = computeSliceNormals(F, theta);
-            let sumResisting = 0;
-            let sumDriving = 0;
-            
-            // Compute interslice forces for display
-            let E = 0; // horizontal interslice force, starting from left boundary
-            
-            for (let i = 0; i < finalSliceData.length; i++) {
-                const r = finalSliceData[i];
-                const s = r.slice;
-                const S = r.shearStrength / F;
-                
-                s.N_spencer = r.N;
-                s.S_spencer = S;
-                s.m_alpha = s.cosAlpha + (s.sinAlpha * s.tanPhi) / F;
-                s.resisting = r.shearStrength / s.m_alpha; // Bishop-equivalent for display
-                s.driving = s.W * s.sinAlpha;
-                s.E_left = E;
-                
-                // Horizontal equilibrium for interslice force
-                E = E + r.N * s.sinAlpha - S * s.cosAlpha;
-                s.E_right = E;
-                s.X_left = s.E_left * Math.tan(theta);
-                s.X_right = s.E_right * Math.tan(theta);
-                
-                sumResisting += r.shearStrength;
-                sumDriving += s.W * s.sinAlpha;
-            }
-            
-            const maxDepth = Math.max(...slices.map(s => s.surfaceY - s.baseY));
-            
-            return {
-                fos: F, valid: true, method: 'spencer',
-                theta: theta,
-                thetaDeg: theta * 180 / Math.PI,
-                converged: converged,
-                centerX, centerY, radius,
-                entryX: entryPoint.x, entryY: entryPoint.y,
-                exitX: exitPoint.x, exitY: exitPoint.y,
-                maxDepth, slices, totalWeight, totalArcLength,
-                sumResisting, sumDriving
-            };
+        // Steep-surface reliability flag: Bishop uses slice WIDTH for cohesion,
+        // so it under-counts resistance (and can fall below the Ordinary method)
+        // on near-vertical crest segments where a tension crack really forms.
+        const maxBaseAngle = Math.max(...slices.map(s => Math.abs(s.alphaDeg)));
+        if (!crack && maxBaseAngle > 70 && isFinite(fosOMS) && F < fosOMS - 0.03) warnings.add('steep');
+
+        const result = {
+            fos: F, valid: true, fosOMS, surfaceType: 'circular',
+            centerX: cx, centerY: cy, radius: R,
+            entryX: entry.x, entryY: entry.y, exitX: exit.x, exitY: exit.y,
+            maxDepth, maxBaseAngle, slices, totalWeight, totalArcLength,
+            sumResisting, sumDriving, crack, seismicKh: built.seismicKh || 0,
+            warnings: Array.from(warnings)
+        };
+        if (allMethods) {
+            const janbu = solveJanbu(slices, entry, exit, bishop.F);
+            const spencer = solveSpencer(slices, bishop.F);
+            result.fosJanbu = crackAdjust(janbu.F, slices, crack, circleRef);
+            result.janbuF0 = janbu.f0;
+            result.fosSpencer = crackAdjust(spencer.F, slices, crack, circleRef);
+            result.spencerThetaDeg = isFinite(spencer.theta) ? spencer.theta * 180 / Math.PI : NaN;
+        }
+        return result;
+    }
+
+    // --- analyze one non-circular surface -------------------------------
+    function analyzeSurface(surfPts, profile, simpleMat, poreParams, numSlices, allMethods, opts) {
+        const built = buildSlicesFromSurface(surfPts, profile, simpleMat, poreParams, numSlices, opts);
+        if (!built) return { fos: Infinity, valid: false };
+        const { slices, entry, exit, totalWeight, totalArcLength, maxDepth, sumDriving, crack } = built;
+
+        const warnings = new Set();
+        const fosOMS = solveOMS(slices);
+        const Fg = (fosOMS > 0 && isFinite(fosOMS)) ? fosOMS : 1.2;
+        // Spencer's root-finding ladders are the cost bottleneck; the optimizer
+        // only needs Janbu (the primary) to score a surface, so skip Spencer
+        // unless the full method set is requested (final result / cross-check).
+        const spencer = allMethods ? solveSpencer(slices, Fg) : { F: NaN, theta: NaN, converged: false };
+        const janbu = solveJanbu(slices, entry, exit, Fg);
+        const janbuF = isFinite(janbu.F) && janbu.F > 0 ? janbu.F : NaN;
+        const spencerF = isFinite(spencer.F) && spencer.F > 0 ? spencer.F : NaN;
+        // Primary FoS on a non-circular surface: Janbu simplified with the f0
+        // correction — a bounded, single-root, force-equilibrium method. It is
+        // robust for the optimizer (no spurious roots) and slightly conservative
+        // (the safe direction). Spencer (complete equilibrium) is reported as a
+        // cross-check and flagged 'spencerinconsistent' when it disagrees by
+        // more than 15% (a sign Spencer's root-finding is unreliable here).
+        const omsF = isFinite(fosOMS) && fosOMS > 0 ? fosOMS : NaN;
+        const spencerConsistent = isFinite(spencerF) && isFinite(janbuF) &&
+            Math.abs(spencerF - janbuF) <= 0.15 * janbuF;
+        let F;
+        if (isFinite(janbuF)) F = janbuF;
+        else if (isFinite(spencerF)) F = spencerF;
+        else if (isFinite(omsF)) { F = omsF; warnings.add('omsfallback'); } // Janbu den<=0 (back-tilted); keep a value
+        else return { fos: Infinity, valid: false };
+        if (!isFinite(spencerF)) {
+            warnings.add('spencerfail');
+            // Spencer failed, so the 15% gate can't validate Janbu. Cross-check
+            // against the (independent) Ordinary method instead.
+            if (isFinite(janbuF) && isFinite(omsF) && Math.abs(janbuF - omsF) > 0.2 * janbuF) warnings.add('methoddisagree');
+        } else if (!spencerConsistent) warnings.add('spencerinconsistent');
+        F = crackAdjust(F, slices, crack);
+        if (crack) warnings.add('tensioncrack');
+        if (F > 100) return { fos: Infinity, valid: false };
+
+        for (const s of slices) {
+            s.driving = s.W * s.sinAlpha + s.khW * s.cosAlpha;
+            let effN = s.W - s.khW * s.sinAlpha - s.u * s.width;
+            if (effN < 0) { effN = 0; warnings.add('tension'); }
+            s.resisting = (s.c * s.width + effN * s.tanPhi);
         }
 
-        /**
-         * Dispatcher: routes to selected analysis method
-         */
+        return {
+            fos: F, valid: true, fosOMS, surfaceType: 'noncircular',
+            fosSpencer: crackAdjust(spencer.F, slices, crack),
+            spencerConsistent,
+            spencerThetaDeg: isFinite(spencer.theta) ? spencer.theta * 180 / Math.PI : NaN,
+            fosJanbu: crackAdjust(janbu.F, slices, crack), janbuF0: janbu.f0,
+            surfacePoints: built.surfacePoints,
+            entryX: entry.x, entryY: entry.y, exitX: exit.x, exitY: exit.y,
+            maxDepth, slices, totalWeight, totalArcLength, sumDriving,
+            sumResisting: slices.reduce((a, s) => a + s.resisting, 0),
+            crack, seismicKh: built.seismicKh || 0, warnings: Array.from(warnings)
+        };
+    }
+
+    // --- circular critical-surface search (entry-exit, sagitta) ---------
+    function searchCritical(profile, simpleMat, poreParams, opts) {
+        const results = [];
+        let tested = 0;
+        const { entryXMin, entryXMax, exitXMin, exitXMax } = opts;
+        const nE = Math.max(2, opts.nEntry), nX = Math.max(2, opts.nExit), nS = Math.max(3, opts.nSag);
+        // Auto tension crack is opt-in (opts.autoCrack): forcing it on would
+        // trim the true critical surface on ordinary slopes and non-
+        // conservatively raise the reported FoS. Steep surfaces where Bishop is
+        // unreliable are flagged instead (see analyzeCircle 'steep' warning).
+        const anOpts = { seismicKh: opts.seismicKh || 0, tensionCrack: opts.tensionCrack,
+            crackWaterFill: opts.crackWaterFill, autoCrack: opts.autoCrack === true };
+
+        function circleFrom(ex, exX, sag) {
+            const yE = surfaceYAt(ex, profile), yX = surfaceYAt(exX, profile);
+            const chord = Math.hypot(exX - ex, yX - yE);
+            if (chord < 2) return null;
+            const R = (chord * chord / 4 + sag * sag) / (2 * sag);
+            if (R < opts.minRadius || R > opts.maxRadius) return null;
+            let nx = -(yX - yE) / chord, ny = (exX - ex) / chord;
+            if (ny < 0) { nx = -nx; ny = -ny; }
+            const h = R - sag;
+            const cx = (ex + exX) / 2 + nx * h;
+            const cy = (yE + yX) / 2 + ny * h;
+            if (yE > cy || yX > cy) return null;
+            return { cx, cy, R };
+        }
+        function evalCandidate(ex, exX, sag) {
+            const c = circleFrom(ex, exX, sag);
+            if (!c) return null;
+            tested++;
+            const r = analyzeCircle(c.cx, c.cy, c.R, profile, simpleMat, poreParams, opts.numSlices, false, anOpts);
+            if (!r.valid) return null;
+            if (r.maxDepth > opts.maxDepth) return null;
+            if (r.entryX < entryXMin - 0.5 || r.entryX > entryXMax + 0.5) return null;
+            if (r.exitX < exitXMin - 0.5 || r.exitX > exitXMax + 0.5) return null;
+            r._ex = ex; r._exX = exX; r._sag = sag;
+            return r;
+        }
+        for (let ie = 0; ie < nE; ie++) {
+            const ex = entryXMin + (entryXMax - entryXMin) * ie / (nE - 1);
+            for (let ix = 0; ix < nX; ix++) {
+                const exX = exitXMin + (exitXMax - exitXMin) * ix / (nX - 1);
+                if (exX - ex < 2) continue;
+                const yE = surfaceYAt(ex, profile), yX = surfaceYAt(exX, profile);
+                const chord = Math.hypot(exX - ex, yX - yE);
+                if (chord < 2) continue;
+                const sMin = Math.max(0.4, chord * 0.02);
+                const sMax = chord * 0.48;
+                for (let is = 0; is < nS; is++) {
+                    const sag = sMin + (sMax - sMin) * is / (nS - 1);
+                    const r = evalCandidate(ex, exX, sag);
+                    if (r) results.push(r);
+                }
+            }
+        }
+        if (results.length === 0) return { results: [], tested };
+        results.sort((a, b) => a.fos - b.fos);
+        const seeds = [];
+        for (const r of results) {
+            if (seeds.length >= 5) break;
+            if (seeds.every(s => Math.abs(s._ex - r._ex) > 5 || Math.abs(s._exX - r._exX) > 5 ||
+                Math.abs(s._sag - r._sag) > 3)) seeds.push(r);
+        }
+        for (const seed of seeds) {
+            let cur = seed;
+            let dE = (entryXMax - entryXMin) / (nE - 1) / 2;
+            let dX = (exitXMax - exitXMin) / (nX - 1) / 2;
+            let dS = Math.max(1, cur._sag * 0.25);
+            for (let round = 0; round < 6; round++) {
+                let improved = false;
+                const trials = [
+                    [cur._ex - dE, cur._exX, cur._sag], [cur._ex + dE, cur._exX, cur._sag],
+                    [cur._ex, cur._exX - dX, cur._sag], [cur._ex, cur._exX + dX, cur._sag],
+                    [cur._ex, cur._exX, Math.max(0.3, cur._sag - dS)], [cur._ex, cur._exX, cur._sag + dS]
+                ];
+                for (const [a, b, s] of trials) {
+                    if (a < entryXMin || a > entryXMax || b < exitXMin || b > exitXMax) continue;
+                    const r = evalCandidate(a, b, s);
+                    if (r && r.fos < cur.fos - 1e-5) { cur = r; improved = true; }
+                }
+                if (!improved) { dE /= 2; dX /= 2; dS /= 2; }
+            }
+            if (cur !== seed) results.push(cur);
+        }
+        results.sort((a, b) => a.fos - b.fos);
+        return { results, tested };
+    }
+
+    // Kinematic admissibility of a slip polyline: every segment's inclination
+    // must stay within the active-wedge limit (45 + phi/2) of the material at
+    // that segment's base. Beyond that limit a tension crack forms rather than
+    // a slip surface — capping here prevents the optimizer from chasing
+    // spurious low-FoS near-vertical back-scarps.
+    function surfaceAdmissible(nodes, profile, simpleMat) {
+        for (let i = 0; i < nodes.length - 1; i++) {
+            const dx = nodes[i + 1].x - nodes[i].x;
+            if (dx <= 1e-6) return false;               // must be single-valued, ascending x
+            const incl = Math.atan2(nodes[i + 1].y - nodes[i].y, dx) * 180 / Math.PI;
+            const baseY = (nodes[i].y + nodes[i + 1].y) / 2;
+            const mat = materialAtY(baseY - 0.01, profile, simpleMat);
+            const phiDeg = mat.phi * 180 / Math.PI;
+            const cap = 45 + phiDeg / 2 + 0.5;
+            if (incl > cap || incl < -cap) return false;
+        }
+        return true;
+    }
+
+    // --- surface-altering optimization to a non-circular critical -------
+    // Parameterization (keeps interior x well-defined as endpoints move):
+    //   xE          entry (toe-side daylight) x, y on ground
+    //   xX          exit (crest-side terminus) x
+    //   dExit >= 0  crack depth at the terminus (0 = daylights on ground)
+    //   depth_i>=0  interior slip depth below ground at fraction i/n
+    // Coordinate descent minimizes the Spencer FoS subject to kinematic
+    // admissibility; a below-ground terminus induces a vertical tension crack.
+    function optimizeSurface(circleResult, profile, simpleMat, poreParams, opts) {
+        opts = opts || {};
+        const n = opts.nNodes || 14;
+        const numSlices = opts.numSlices || 50;
+        const anOpts = { seismicKh: opts.seismicKh || 0, crackWaterFill: opts.crackWaterFill };
+        const { centerX: cx, centerY: cy, radius: R, entryX, exitX } = circleResult;
+        const exMin = opts.entryXMin != null ? opts.entryXMin : entryX - (exitX - entryX);
+        const exMax = opts.entryXMax != null ? opts.entryXMax : exitX;
+        const xxMin = opts.exitXMin != null ? opts.exitXMin : entryX;
+        const xxMax = opts.exitXMax != null ? opts.exitXMax : exitX + (exitX - entryX);
+
+        const state = { xE: entryX, xX: exitX, dExit: 0, depths: [] };
+        for (let i = 1; i < n; i++) {
+            const x = entryX + (exitX - entryX) * i / n;
+            const ay = lowerArcY(x, cx, cy, R);
+            state.depths.push(Math.max(0.3, surfaceYAt(x, profile) - (ay != null ? ay : surfaceYAt(x, profile) - 1)));
+        }
+        function build(st) {
+            if (st.xX - st.xE < 3) return null;
+            const nodes = [{ x: st.xE, y: surfaceYAt(st.xE, profile) }];
+            for (let i = 1; i < n; i++) {
+                const x = st.xE + (st.xX - st.xE) * i / n;
+                nodes.push({ x, y: surfaceYAt(x, profile) - Math.max(0.2, st.depths[i - 1]) });
+            }
+            nodes.push({ x: st.xX, y: surfaceYAt(st.xX, profile) - Math.max(0, st.dExit) });
+            return nodes;
+        }
+        // Score by the primary (Janbu-corrected) FoS of an admissible surface.
+        // Janbu is bounded and single-rooted, so the optimizer cannot chase the
+        // spurious Spencer roots that irregular surfaces can produce.
+        function score(st) {
+            const nodes = build(st);
+            if (!nodes || !surfaceAdmissible(nodes, profile, simpleMat)) return { f: Infinity, nodes };
+            // allMethods=false: Janbu-only scoring (fast; Spencer is skipped)
+            const r = analyzeSurface(nodes, profile, simpleMat, poreParams, numSlices, false, anOpts);
+            if (!r.valid || !isFinite(r.fos) || r.fos <= 0) return { f: Infinity, nodes };
+            if (r.maxDepth > (opts.maxDepth || Infinity)) return { f: Infinity, nodes };
+            return { f: r.fos, nodes, r };
+        }
+        const maxCrack = opts.maxCrackDepth || Math.max(20, 0.3 * profile.totalHeight);
+        // If the seeded terminus is inadmissibly steep (circles exiting near a
+        // crest usually are), open a tension crack until it becomes admissible.
+        let best = score(state);
+        if (!isFinite(best.f)) {
+            for (let d = 2; d <= maxCrack; d += 2) {
+                const s = score({ ...state, dExit: d });
+                if (isFinite(s.f)) { state.dExit = d; best = s; break; }
+            }
+        }
+        const span = exitX - entryX;
+        let dStep = Math.max(1, span / n * 0.5);   // depth step
+        let xStep = Math.max(2, span * 0.06);      // endpoint step
+
+        for (let round = 0; round < 80; round++) {
+            let improved = false;
+            // interior depths
+            for (let i = 0; i < state.depths.length; i++) {
+                for (const dd of [-dStep, dStep]) {
+                    const nd = state.depths.slice(); nd[i] = Math.max(0.2, nd[i] + dd);
+                    const trial = { ...state, depths: nd };
+                    const s = score(trial);
+                    if (s.f < best.f - 1e-5) { state.depths = nd; best = s; improved = true; }
+                }
+            }
+            // entry x
+            for (const dx of [-xStep, xStep]) {
+                const xE = Math.min(Math.max(state.xE + dx, exMin), exMax);
+                const s = score({ ...state, xE });
+                if (s.f < best.f - 1e-5) { state.xE = xE; best = s; improved = true; }
+            }
+            // exit x
+            for (const dx of [-xStep, xStep]) {
+                const xX = Math.min(Math.max(state.xX + dx, xxMin), xxMax);
+                const s = score({ ...state, xX });
+                if (s.f < best.f - 1e-5) { state.xX = xX; best = s; improved = true; }
+            }
+            // exit crack depth
+            for (const dd of [-dStep, dStep]) {
+                const dExit = Math.min(maxCrack, Math.max(0, state.dExit + dd));
+                const s = score({ ...state, dExit });
+                if (s.f < best.f - 1e-5) { state.dExit = dExit; best = s; improved = true; }
+            }
+            if (!improved) { dStep /= 2; xStep /= 2; if (dStep < 0.05 * span / n) break; }
+        }
+        if (!isFinite(best.f)) return null;
+        const nodes = build(state);
+        const final = analyzeSurface(nodes, profile, simpleMat, poreParams, numSlices, true, anOpts);
+        return (final.valid && surfaceAdmissible(nodes, profile, simpleMat)) ? final : null;
+    }
+
+    // Convenience: circular search, then optimize the best few into
+    // non-circular surfaces; return whichever is lower.
+    function searchNonCircular(profile, simpleMat, poreParams, opts) {
+        const circ = searchCritical(profile, simpleMat, poreParams, opts);
+        if (!circ.results.length) return { circular: null, noncircular: null, best: null, tested: circ.tested };
+        const bestCirc = circ.results[0];
+        let bestNC = null;
+        const nSeed = Math.min(3, circ.results.length);
+        for (let i = 0; i < nSeed; i++) {
+            const nc = optimizeSurface(circ.results[i], profile, simpleMat, poreParams, opts);
+            if (nc && (!bestNC || nc.fos < bestNC.fos)) bestNC = nc;
+        }
+        const best = (bestNC && bestNC.fos < bestCirc.fos) ? bestNC : bestCirc;
+        return { circular: bestCirc, noncircular: bestNC, best, tested: circ.tested, allCircular: circ.results };
+    }
+
+    return {
+        GAMMA_W, surfaceYAt, interpPolyline, materialAtY, columnWeight,
+        circleSurfaceIntersections, buildSlices, buildSlicesFromSurface,
+        solveOMS, solveBishop, solveJanbu, solveSpencer,
+        analyzeCircle, analyzeSurface, searchCritical,
+        optimizeSurface, searchNonCircular, surfaceAdmissible
+    };
+})();
+// ================== END SLOPE ENGINE v3 ==================
+if (typeof module !== 'undefined') module.exports = SlopeEngine;
+
+        // ---------- DOM adapters for the validated engine ----------
+        // Everything internal is imperial; fromDisplay converts DOM inputs.
+        function makeSegmentMaterial(seg) {
+            const c = fromDisplay(seg.cohesion, 'pressure');
+            const gamma = fromDisplay(seg.unitWeight, 'unitWeight');
+            const phi = seg.frictionAngle * Math.PI / 180;
+            if (document.getElementById('strengthModel') && document.getElementById('strengthModel').value === 'leps') {
+                const dPhi = parseFloat(document.getElementById('lepsDeltaPhi').value) || 10;
+                return { c, phi, gamma, strengthModel: 'leps', phi0: phi, deltaPhi: dPhi };
+            }
+            return { c, phi, gamma };
+        }
+
+        function getSimpleMaterial() {
+            const c = fromDisplay(parseFloat(document.getElementById('cohesion').value), 'pressure');
+            const gamma = fromDisplay(parseFloat(document.getElementById('unitWeight').value), 'unitWeight');
+            const sm = document.getElementById('strengthModel') ? document.getElementById('strengthModel').value : 'mohr_coulomb';
+            if (sm === 'leps') {
+                const phi0 = (parseFloat(document.getElementById('lepsPhi0').value) || 50) * Math.PI / 180;
+                const dPhi = parseFloat(document.getElementById('lepsDeltaPhi').value) || 10;
+                return { c, phi: phi0, gamma, strengthModel: 'leps', phi0, deltaPhi: dPhi };
+            }
+            return { c, phi: parseFloat(document.getElementById('frictionAngle').value) * Math.PI / 180, gamma };
+        }
+
+        // Seismic + tension-crack options (read defensively: UI may not exist yet).
+        function getAnalysisOptions() {
+            const el = id => document.getElementById(id);
+            const kh = el('seismicKh') ? (parseFloat(el('seismicKh').value) || 0) : 0;
+            const crackOn = el('tensionCrackEnable') ? el('tensionCrackEnable').checked : false;
+            const fill = el('crackWaterFill') ? (parseFloat(el('crackWaterFill').value) || 0) / 100 : 0;
+            return { seismicKh: kh, crackEnabled: crackOn, crackWaterFill: fill };
+        }
+
+        // Sloping piezometric line from toe/crest depths (imperial internal).
+        function buildPiezoLine(profile, pore) {
+            if (!pore.piezoRequested) return null;
+            const toeX = profile.points[0].x, crestX = profile.xCrest;
+            const toeG = SlopeEngine.surfaceYAt(toeX, profile), crestG = SlopeEngine.surfaceYAt(crestX, profile);
+            return [
+                { x: toeX - 500, y: toeG - pore.piezoToeDepth },
+                { x: toeX, y: toeG - pore.piezoToeDepth },
+                { x: crestX, y: crestG - pore.piezoCrestDepth },
+                { x: crestX + 500, y: crestG - pore.piezoCrestDepth }
+            ];
+        }
+
+        // Method-aware single-surface analysis. Kept for the sensitivity module,
+        // which calls calculateFOS and reads {valid, fos, entryX, exitX, maxDepth}.
+        function selectedMethod() {
+            const el = document.getElementById('analysisMethod');
+            return el ? el.value : 'bishop';
+        }
+        function reportFosForMethod(r) {
+            if (!r || !r.valid) return r;
+            const m = selectedMethod();
+            r.method = m;
+            if (isFinite(r.spencerThetaDeg)) r.thetaDeg = r.spencerThetaDeg;
+            if (m === 'spencer' && isFinite(r.fosSpencer) && r.fosSpencer > 0) r.fos = r.fosSpencer;
+            else if (m === 'janbu' && isFinite(r.fosJanbu) && r.fosJanbu > 0) r.fos = r.fosJanbu;
+            else if (m === 'ordinary' && isFinite(r.fosOMS) && r.fosOMS > 0) r.fos = r.fosOMS;
+            return r;
+        }
         function calculateFOS(centerX, centerY, radius, profile, poreParams, numSlices) {
-            const method = document.getElementById('analysisMethod').value;
-            if (method === 'spencer') {
-                return calculateSpencerFOS(centerX, centerY, radius, profile, poreParams, numSlices);
+            const wantAll = selectedMethod() !== 'bishop';
+            const r = SlopeEngine.analyzeCircle(centerX, centerY, radius, profile,
+                getSimpleMaterial(), poreParams, numSlices, wantAll, getEngineOpts());
+            return reportFosForMethod(r);
+        }
+        // Backwards-compatible alias (some call sites / saved refs use this name).
+        function calculateBishopFOS(centerX, centerY, radius, profile, poreParams, numSlices) {
+            return SlopeEngine.analyzeCircle(centerX, centerY, radius, profile,
+                getSimpleMaterial(), poreParams, numSlices, false, getEngineOpts());
+        }
+
+        function getEngineOpts() {
+            const a = getAnalysisOptions();
+            return { seismicKh: a.seismicKh, crackWaterFill: a.crackWaterFill };
+        }
+
+        // Auto-place a tension crack on a circle (most critical depth).
+        function circleWithAutoCrack(circ, profile, mat, poreParams, numSlices, baseOpts) {
+            let worst = null;
+            const step = Math.max(1, (circ.exitX - circ.entryX) / 40);
+            for (let xc = circ.entryX + (circ.exitX - circ.entryX) * 0.45; xc < circ.exitX; xc += step) {
+                const r = SlopeEngine.analyzeCircle(circ.centerX, circ.centerY, circ.radius, profile, mat,
+                    poreParams, numSlices, true, Object.assign({}, baseOpts, { tensionCrack: { x: xc } }));
+                if (r.valid && r.crack && r.crack.depth > 0.5 && (!worst || r.fos < worst.fos)) worst = r;
             }
-            return calculateBishopFOS(centerX, centerY, radius, profile, poreParams, numSlices);
+            return worst;
         }
 
         function runAnalysis() {
             const profile = buildSlopeProfile();
-            const H = profile.totalHeight;
-            const xCrest = profile.xCrest;
-            
+            const H = profile.totalHeight, xCrest = profile.xCrest;
+
             const poreParams = getPorePressureParams();
+            poreParams.piezoLine = buildPiezoLine(profile, poreParams);
+            const analysisOpts = getAnalysisOptions();
+            const engineOpts = { seismicKh: analysisOpts.seismicKh, crackWaterFill: analysisOpts.crackWaterFill };
+            const surfaceTypeEl = document.getElementById('surfaceType');
+            const surfaceType = surfaceTypeEl ? surfaceTypeEl.value : 'circular';
             const gridDensity = parseInt(document.getElementById('gridDensity').value);
             const numSlices = parseInt(document.getElementById('numSlices').value);
-            
-            // Get independent limits
             const limits = getLimits();
-            const toeMin = limits.toeMin;  // Entry point minimum (negative = left of toe)
-            const toeMax = limits.toeMax;  // Entry point maximum (positive = right of toe)
-            const crestMin = limits.crestMin;  // Exit point minimum (negative = left of crest)
-            const crestMax = limits.crestMax;  // Exit point maximum (positive = right of crest)
-            
-            // Get depth and radius constraints
             const constraints = getConstraints();
-            const maxDepth = constraints.maxDepth;
-            const minRadius = constraints.minRadius;
-            const maxRadius = constraints.maxRadius;
-            
-            const results = [];
-            
-            // Grid search - search area covers the full range of possible circles
-            const searchXMin = Math.min(toeMin, 0) - 20;
-            const searchXMax = xCrest + Math.max(crestMax, 0) + 20;
-            const yMin = H * 0.5;
-            const yMax = H * 3;
-            
-            for (let ix = 0; ix <= gridDensity; ix++) {
-                const centerX = searchXMin + (searchXMax - searchXMin) * ix / gridDensity;
-                for (let iy = 0; iy <= gridDensity; iy++) {
-                    const centerY = yMin + (yMax - yMin) * iy / gridDensity;
-                    
-                    // Use constrained radius range
-                    const calcMinR = Math.max(minRadius, 10);
-                    const calcMaxR = Math.min(maxRadius, Math.sqrt(centerX * centerX + centerY * centerY) + H);
-                    
-                    if (calcMinR >= calcMaxR) continue;
-                    
-                    for (let ir = 0; ir < 8; ir++) {
-                        const radius = calcMinR + (calcMaxR - calcMinR) * ir / 7;
-                        const result = calculateFOS(centerX, centerY, radius, profile, poreParams, numSlices);
-                        
-                        if (!result.valid) continue;
-                        
-                        // Check if entry and exit points are within the independent limits
-                        const entryOK = result.entryX >= toeMin && result.entryX <= toeMax;
-                        const exitOK = result.exitX >= (xCrest + crestMin) && result.exitX <= (xCrest + crestMax);
-                        
-                        // Also check that entry is below (lower X than) exit for valid circular failure
-                        const geometryOK = result.entryX < result.exitX;
-                        
-                        // Check depth constraint
-                        const depthOK = result.maxDepth <= maxDepth;
-                        
-                        if (entryOK && exitOK && geometryOK && depthOK) {
-                            results.push({ ...result, profile, xCrest, totalHeight: H });
-                        }
-                    }
-                }
-            }
-            
+            const simpleMat = getSimpleMaterial();
+            const method = selectedMethod();
+
+            const nEX = Math.min(31, 6 + gridDensity);
+            const searchOpts = {
+                entryXMin: limits.toeMin, entryXMax: limits.toeMax,
+                exitXMin: xCrest + limits.crestMin, exitXMax: xCrest + limits.crestMax,
+                nEntry: nEX, nExit: nEX, nSag: 8, numSlices: numSlices,
+                maxDepth: constraints.maxDepth, minRadius: constraints.minRadius, maxRadius: constraints.maxRadius,
+                seismicKh: analysisOpts.seismicKh, crackWaterFill: analysisOpts.crackWaterFill, nNodes: 16
+            };
+            const search = SlopeEngine.searchCritical(profile, simpleMat, poreParams, searchOpts);
+            const results = search.results;
             if (results.length === 0) {
-                // Provide more specific guidance
-                const entryMidX = (toeMin + toeMax) / 2;
-                const exitMidX = xCrest + (crestMin + crestMax) / 2;
-                if (entryMidX >= exitMidX) {
-                    alert('No valid failure surfaces found.\n\nThe entry zone appears to be at or above the exit zone. For a valid circular failure, the entry (toe) must be below the exit (crest) on the slope.\n\nTry moving the entry zone downslope or the exit zone upslope.');
-                } else {
-                    alert('No valid failure surfaces found within the specified constraints.\n\nTry:\n• Increasing max depth (currently ' + toDisplay(maxDepth, 'length').toFixed(0) + ' ' + getUnit('length') + ')\n• Widening the radius range (' + toDisplay(minRadius, 'length').toFixed(0) + ' - ' + toDisplay(maxRadius, 'length').toFixed(0) + ' ' + getUnit('length') + ')\n• Widening the search zones\n• Increasing the grid density');
-                }
+                const entryMidX = (limits.toeMin + limits.toeMax) / 2;
+                const exitMidX = xCrest + (limits.crestMin + limits.crestMax) / 2;
+                if (entryMidX >= exitMidX) alert('No valid failure surfaces found.\n\nThe entry zone appears to be at or above the exit zone. For a valid circular failure, the entry (toe) must be below the exit (crest).\n\nTry moving the entry zone downslope or the exit zone upslope.');
+                else alert('No valid failure surfaces found within the specified constraints.\n\nTry increasing max depth, widening the radius range, or widening the entry/exit search zones.');
                 return;
             }
-            
-            results.sort((a, b) => a.fos - b.fos);
-            
-            // Refinement
+
             const best = results[0];
-            const refR = Math.max(H * 0.1, 10);
-            
-            for (let dx = -5; dx <= 5; dx++) {
-                for (let dy = -5; dy <= 5; dy++) {
-                    for (let dr = -5; dr <= 5; dr++) {
-                        const cx = best.centerX + dx * refR / 5;
-                        const cy = best.centerY + dy * refR / 5;
-                        const r = best.radius + dr * refR / 5;
-                        
-                        // Check radius constraints
-                        if (r < minRadius || r > maxRadius) continue;
-                        
-                        const result = calculateFOS(cx, cy, r, profile, poreParams, numSlices);
-                        if (!result.valid) continue;
-                        
-                        const entryOK = result.entryX >= toeMin && result.entryX <= toeMax;
-                        const exitOK = result.exitX >= (xCrest + crestMin) && result.exitX <= (xCrest + crestMax);
-                        const geometryOK = result.entryX < result.exitX;
-                        const depthOK = result.maxDepth <= maxDepth;
-                        
-                        if (entryOK && exitOK && geometryOK && depthOK && result.fos < results[0].fos) {
-                            results.unshift({ ...result, profile, xCrest, totalHeight: H });
-                        }
-                    }
-                }
+            let critical = SlopeEngine.analyzeCircle(best.centerX, best.centerY, best.radius,
+                profile, simpleMat, poreParams, numSlices, true, engineOpts);
+            if (!critical.valid) critical = best;
+
+            if (analysisOpts.crackEnabled) {
+                const cracked = circleWithAutoCrack(best, profile, simpleMat, poreParams, numSlices, engineOpts);
+                if (cracked && cracked.valid && cracked.fos <= critical.fos + 1e-6) critical = cracked;
+            } else if (critical.warnings && critical.warnings.indexOf('steep') >= 0) {
+                const cracked = SlopeEngine.analyzeCircle(best.centerX, best.centerY, best.radius,
+                    profile, simpleMat, poreParams, numSlices, true, Object.assign({}, engineOpts, { autoCrack: true }));
+                if (cracked.valid) critical = cracked;
             }
-            
-            results.sort((a, b) => a.fos - b.fos);
-            
+
+            let noncircular = null;
+            if (surfaceType === 'noncircular') {
+                const nc = SlopeEngine.searchNonCircular(profile, simpleMat, poreParams, searchOpts);
+                if (nc.noncircular && nc.noncircular.valid) { noncircular = nc.noncircular; critical = noncircular; }
+            }
+
+            // Report the FoS for the selected analysis method.
+            reportFosForMethod(critical);
+            critical = Object.assign({}, critical, { profile, xCrest, totalHeight: H });
+
+            const toShow = [critical].concat(results.slice(1, 30).map(function (r) {
+                return reportFosForMethod(Object.assign({}, r, { profile: profile, xCrest: xCrest, totalHeight: H }));
+            }));
+
             lastAnalysisResult = {
-                critical: results[0],
-                profile: profile,
+                critical: critical, profile: profile,
+                stats: { tested: search.tested, found: results.length, surfaceType: critical.surfaceType || 'circular' },
                 inputs: {
-                    H, poreParams, numSlices,
-                    advancedMode, segments: [...segments],
-                    limits: limits,
-                    strengthModel: document.getElementById('strengthModel').value,
-                    lepsPhi0: parseFloat(document.getElementById('lepsPhi0').value) || 50,
-                    lepsDeltaPhi: parseFloat(document.getElementById('lepsDeltaPhi').value) || 10,
-                    analysisMethod: document.getElementById('analysisMethod').value
+                    H, poreParams, numSlices, analysisOpts, advancedMode, segments: [...segments], limits,
+                    strengthModel: document.getElementById('strengthModel') ? document.getElementById('strengthModel').value : 'mohr_coulomb',
+                    lepsPhi0: parseFloat((document.getElementById('lepsPhi0') || {}).value) || 50,
+                    lepsDeltaPhi: parseFloat((document.getElementById('lepsDeltaPhi') || {}).value) || 10,
+                    analysisMethod: method
                 }
             };
-            
-            const toShow = results.slice(0, 40);
+
             showResults(toShow);
             visualizeSlope(toShow, profile, poreParams, limits);
             showCalculationDetails();
@@ -3843,8 +4396,11 @@
             document.getElementById('exitPoint').innerHTML = `${exitFromCrest >= 0 ? '+' : ''}${exitFromCrest.toFixed(1)} ${uLen} from crest`;
             document.getElementById('criticalDepth').innerHTML = toDisplay(c.maxDepth, 'length').toFixed(1) + ' ' + uLen;
             document.getElementById('surfaceLength').innerHTML = toDisplay(c.totalArcLength, 'length').toFixed(0) + ' ' + uLen;
-            document.getElementById('circleRadius').innerHTML = toDisplay(c.radius, 'length').toFixed(1) + ' ' + uLen;
-            document.getElementById('circleCenter').innerHTML = `(${toDisplay(c.centerX, 'length').toFixed(0)}, ${toDisplay(c.centerY, 'length').toFixed(0)})`;
+            const isNC = c.surfaceType === 'noncircular' || !isFinite(c.radius);
+            document.getElementById('circleRadius').innerHTML = isNC ? 'non-circular' : toDisplay(c.radius, 'length').toFixed(1) + ' ' + uLen;
+            document.getElementById('circleCenter').innerHTML = isNC
+                ? (c.crack && c.crack.depth > 0.5 ? `crack ${toDisplay(c.crack.depth, 'length').toFixed(1)} ${uLen}` : '—')
+                : `(${toDisplay(c.centerX, 'length').toFixed(0)}, ${toDisplay(c.centerY, 'length').toFixed(0)})`;
             
             // Spencer theta display
             const spencerItem = document.getElementById('spencerThetaItem');
@@ -3995,7 +4551,7 @@
                     <td>${s.W.toFixed(0)}</td>
                     <td>${s.alphaDeg.toFixed(1)}</td>
                     <td>${s.u.toFixed(0)}</td>
-                    <td>${s.m_alpha.toFixed(3)}</td>
+                    <td>${s.m_alpha != null ? s.m_alpha.toFixed(3) : '—'}</td>
                     <td>${s.resisting.toFixed(0)}</td>
                     <td>${s.driving.toFixed(0)}</td>
                 </tr>`;
@@ -4066,7 +4622,8 @@
             for (const r of results.slice(0, 15)) {
                 minX = Math.min(minX, r.entryX - 10);
                 maxX = Math.max(maxX, r.exitX + 10);
-                minY = Math.min(minY, r.centerY - r.radius - 5);
+                if (r.surfaceType === 'noncircular' && r.surfacePoints) { for (const p of r.surfacePoints) minY = Math.min(minY, p.y - 5); }
+                else if (isFinite(r.centerY) && isFinite(r.radius)) minY = Math.min(minY, r.centerY - r.radius - 5);
             }
             
             const scaleX = (canvas.width - 2 * margin) / (maxX - minX);
@@ -4656,7 +5213,8 @@
             for (const r of results.slice(0, 15)) {
                 minX = Math.min(minX, r.entryX - 10);
                 maxX = Math.max(maxX, r.exitX + 10);
-                minY = Math.min(minY, r.centerY - r.radius - 5);
+                if (r.surfaceType === 'noncircular' && r.surfacePoints) { for (const p of r.surfacePoints) minY = Math.min(minY, p.y - 5); }
+                else if (isFinite(r.centerY) && isFinite(r.radius)) minY = Math.min(minY, r.centerY - r.radius - 5);
             }
             
             const scaleX = (canvas.width - 2 * margin) / (maxX - minX);
@@ -4773,7 +5331,42 @@
             ctx.fillText(`FoS = ${critical.fos.toFixed(3)}`, toX(lx)-50, toY(ly)-8);
         }
 
+        // Non-circular slip surface (polyline) + optional tension crack.
+        function drawNonCircular(ctx, r, toX, toY, profile, isCritical) {
+            const pts = r.surfacePoints;
+            if (!pts || pts.length < 2) return;
+            const col = isCritical ? '#ff9e64' : (r.fos < 1.3 ? '#f7768e' : r.fos < 1.5 ? '#e0af68' : '#9ece6a');
+            ctx.fillStyle = isCritical ? 'rgba(255,158,100,0.25)' : col;
+            ctx.globalAlpha = isCritical ? 1 : (r.fos < 1.3 ? 0.08 : 0.05);
+            ctx.beginPath();
+            ctx.moveTo(toX(pts[0].x), toY(pts[0].y));
+            for (const p of pts) ctx.lineTo(toX(p.x), toY(p.y));
+            for (let i = pts.length - 1; i >= 0; i--) ctx.lineTo(toX(pts[i].x), toY(getSurfaceY(pts[i].x, profile)));
+            ctx.closePath(); ctx.fill(); ctx.globalAlpha = 1;
+            ctx.strokeStyle = col; ctx.lineWidth = isCritical ? 3 : 1;
+            ctx.globalAlpha = isCritical ? 1 : 0.3;
+            ctx.beginPath();
+            ctx.moveTo(toX(pts[0].x), toY(pts[0].y));
+            for (const p of pts) ctx.lineTo(toX(p.x), toY(p.y));
+            ctx.stroke(); ctx.globalAlpha = 1;
+            if (isCritical && r.crack && r.crack.depth > 0.5) {
+                ctx.strokeStyle = '#f7768e'; ctx.lineWidth = 2; ctx.setLineDash([5, 3]);
+                ctx.beginPath();
+                ctx.moveTo(toX(r.crack.x), toY(r.crack.baseY));
+                ctx.lineTo(toX(r.crack.x), toY(getSurfaceY(r.crack.x, profile)));
+                ctx.stroke(); ctx.setLineDash([]);
+                if (r.crack.waterDepth > 0.1) {
+                    ctx.strokeStyle = '#7aa2f7'; ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    ctx.moveTo(toX(r.crack.x), toY(r.crack.baseY));
+                    ctx.lineTo(toX(r.crack.x), toY(r.crack.baseY + r.crack.waterDepth));
+                    ctx.stroke();
+                }
+            }
+        }
+
         function drawArc(ctx, r, toX, toY, profile, isCritical) {
+            if (r.surfaceType === 'noncircular' || !isFinite(r.radius)) { drawNonCircular(ctx, r, toX, toY, profile, isCritical); return; }
             const { centerX, centerY, radius, entryX, entryY, exitX, exitY } = r;
             const ea = -Math.atan2(entryY - centerY, entryX - centerX);
             const xa = -Math.atan2(exitY - centerY, exitX - centerX);
@@ -4997,42 +5590,21 @@
                 const limits = getLimits();
                 const constraints = getConstraints();
 
-                // Use a quick grid search to find critical surface for this configuration
-                const gridDensity = 8; // Reduced for speed
+                // Entry-exit search (same validated engine as the main analysis)
+                poreParams.piezoLine = buildPiezoLine(profile, poreParams);
+                const sr = SlopeEngine.searchCritical(profile, getSimpleMaterial(), poreParams, {
+                    entryXMin: limits.toeMin, entryXMax: limits.toeMax,
+                    exitXMin: xCrest + limits.crestMin, exitXMax: xCrest + limits.crestMax,
+                    nEntry: 9, nExit: 9, nSag: 6, numSlices: numSlices,
+                    maxDepth: constraints.maxDepth, minRadius: constraints.minRadius, maxRadius: constraints.maxRadius,
+                    seismicKh: getAnalysisOptions().seismicKh
+                });
                 let bestFos = Infinity;
-                let bestResult = null;
-
-                const searchXMin = Math.min(limits.toeMin, 0) - 20;
-                const searchXMax = xCrest + Math.max(limits.crestMax, 0) + 20;
-                const yMin = H * 0.5;
-                const yMax = H * 2.5;
-
-                for (let ix = 0; ix <= gridDensity; ix++) {
-                    const centerX = searchXMin + (searchXMax - searchXMin) * ix / gridDensity;
-                    for (let iy = 0; iy <= gridDensity; iy++) {
-                        const centerY = yMin + (yMax - yMin) * iy / gridDensity;
-                        const calcMinR = Math.max(constraints.minRadius, 10);
-                        const calcMaxR = Math.min(constraints.maxRadius, Math.sqrt(centerX * centerX + centerY * centerY) + H);
-
-                        if (calcMinR >= calcMaxR) continue;
-
-                        for (let ir = 0; ir < 5; ir++) {
-                            const radius = calcMinR + (calcMaxR - calcMinR) * ir / 4;
-                            const result = calculateFOS(centerX, centerY, radius, profile, poreParams, numSlices);
-
-                            if (!result.valid) continue;
-
-                            const entryOK = result.entryX >= limits.toeMin && result.entryX <= limits.toeMax;
-                            const exitOK = result.exitX >= (xCrest + limits.crestMin) && result.exitX <= (xCrest + limits.crestMax);
-                            const geometryOK = result.entryX < result.exitX;
-                            const depthOK = result.maxDepth <= constraints.maxDepth;
-
-                            if (entryOK && exitOK && geometryOK && depthOK && result.fos < bestFos) {
-                                bestFos = result.fos;
-                                bestResult = result;
-                            }
-                        }
-                    }
+                if (sr.results.length) {
+                    const b0 = sr.results[0];
+                    const full = reportFosForMethod(SlopeEngine.analyzeCircle(b0.centerX, b0.centerY, b0.radius,
+                        profile, getSimpleMaterial(), poreParams, numSlices, selectedMethod() !== 'bishop', getEngineOpts()));
+                    bestFos = full.valid ? full.fos : Infinity;
                 }
 
                 results.push({
@@ -5057,6 +5629,13 @@
 
         function displaySensitivityResults(results, config, baselineValue) {
             document.getElementById('sensitivityResults').style.display = 'block';
+
+            if (!results.some(r => r.fos !== null)) {
+                document.getElementById('sensitivityParamHeader').textContent = config.label;
+                document.getElementById('sensitivityTableBody').innerHTML =
+                    '<tr><td colspan="4">No valid failure surface found across this parameter range. Widen the search zones or constraints.</td></tr>';
+                return;
+            }
 
             // Find baseline FoS
             const baselineResult = results.find(r => r.isBaseline) || results[Math.floor(results.length / 2)];
@@ -5395,9 +5974,12 @@
                 csv += `result_entryX,${c.entryX.toFixed(2)}\n`;
                 csv += `result_exitX,${c.exitX.toFixed(2)}\n`;
                 csv += `result_maxDepth,${c.maxDepth.toFixed(2)}\n`;
-                csv += `result_radius,${c.radius.toFixed(2)}\n`;
-                csv += `result_centerX,${c.centerX.toFixed(2)}\n`;
-                csv += `result_centerY,${c.centerY.toFixed(2)}\n`;
+                csv += `result_surfaceType,${c.surfaceType || 'circular'}\n`;
+                csv += `result_radius,${isFinite(c.radius) ? c.radius.toFixed(2) : 'noncircular'}\n`;
+                csv += `result_centerX,${isFinite(c.centerX) ? c.centerX.toFixed(2) : ''}\n`;
+                csv += `result_centerY,${isFinite(c.centerY) ? c.centerY.toFixed(2) : ''}\n`;
+                if (c.crack && c.crack.depth > 0.5) csv += `result_tensionCrackDepth,${c.crack.depth.toFixed(2)}\n`;
+                if (c.seismicKh) csv += `result_seismicKh,${c.seismicKh.toFixed(3)}\n`;
                 csv += `result_arcLength,${c.totalArcLength.toFixed(2)}\n`;
                 csv += `result_totalWeight,${c.totalWeight.toFixed(2)}\n`;
             }
@@ -6134,11 +6716,37 @@
                     ctx.fillText('▼ Water Table', toX(minX) + 5, toY(wY) - 5);
                 }
                 
+                // Non-circular critical surface: draw the polyline + crack, then finish.
+                if (critical.surfaceType === 'noncircular' && critical.surfacePoints) {
+                    const pts = critical.surfacePoints;
+                    ctx.fillStyle = 'rgba(239, 68, 68, 0.22)';
+                    ctx.beginPath();
+                    ctx.moveTo(toX(pts[0].x), toY(pts[0].y));
+                    for (const p of pts) ctx.lineTo(toX(p.x), toY(p.y));
+                    for (let k = pts.length - 1; k >= 0; k--) ctx.lineTo(toX(pts[k].x), toY(getSurfaceY(pts[k].x, profile)));
+                    ctx.closePath(); ctx.fill();
+                    ctx.strokeStyle = '#dc2626'; ctx.lineWidth = 3;
+                    ctx.beginPath(); ctx.moveTo(toX(pts[0].x), toY(pts[0].y));
+                    for (const p of pts) ctx.lineTo(toX(p.x), toY(p.y));
+                    ctx.stroke();
+                    if (critical.crack && critical.crack.depth > 0.5) {
+                        ctx.strokeStyle = '#b91c1c'; ctx.lineWidth = 2; ctx.setLineDash([5, 3]);
+                        ctx.beginPath();
+                        ctx.moveTo(toX(critical.crack.x), toY(critical.crack.baseY));
+                        ctx.lineTo(toX(critical.crack.x), toY(getSurfaceY(critical.crack.x, profile)));
+                        ctx.stroke(); ctx.setLineDash([]);
+                    }
+                    ctx.fillStyle = '#dc2626'; ctx.font = 'bold 18px Arial';
+                    ctx.fillText(`FoS = ${critical.fos.toFixed(3)}`, toX((critical.entryX + critical.exitX) / 2) - 50, toY(getSurfaceY((critical.entryX + critical.exitX) / 2, profile)) - 40);
+                    resolve(canvas.toDataURL('image/png'));
+                    return;
+                }
+
                 // Critical failure surface - fill
                 ctx.fillStyle = 'rgba(239, 68, 68, 0.25)';
                 ctx.beginPath();
                 ctx.moveTo(toX(critical.entryX), toY(critical.entryY));
-                
+
                 const entryAngle = Math.atan2(critical.entryY - critical.centerY, critical.entryX - critical.centerX);
                 const exitAngle = Math.atan2(critical.exitY - critical.centerY, critical.exitX - critical.centerX);
                 
